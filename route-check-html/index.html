@@ -1,0 +1,339 @@
+<!--Made with Gemini-->
+
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>指令コードビジュアライザー</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      /* カスタムスタイル: 盤面とエージェントの動きを見やすく */
+      #canvas {
+        border: 2px solid #333;
+        background-color: #f8f8f8;
+      }
+    </style>
+  </head>
+  <body
+    class="bg-gray-50 min-h-screen flex flex-col items-center p-4 font-sans"
+  >
+    <div class="max-w-4xl w-full">
+      <h1 class="text-3xl font-bold text-gray-800 mb-6 text-center">
+        指令コードビジュアライザー
+      </h1>
+
+      <div class="flex flex-col md:flex-row gap-6 mb-6">
+        <!-- Canvas Area -->
+        <div class="flex-shrink-0">
+          <!-- 盤面 8x8 (25px/マス) = 200px x 200px。オフセット 100px で 400x400 のキャンバスに変更 -->
+          <canvas
+            id="canvas"
+            width="400"
+            height="400"
+            class="rounded-lg shadow-xl"
+          ></canvas>
+        </div>
+
+        <!-- Control Panel -->
+        <div class="flex-grow flex flex-col space-y-4">
+          <textarea
+            id="commandInput"
+            placeholder="指令コードを入力してください（例）:
+// 論理原点 (0, 0) は左上です。負の値も使用可能です。
+
+UP             // ペンを下ろす (MOVEは赤線)
+MOVE(150, 0, 1000)    // 赤線でX軸方向(下)へ移動 (f=1000)
+DOWN           // ペンを上げる (MOVEは黄色線)
+MOVE(150, 150, 500)   // 黄色線でY軸方向(右)へ移動 (f=500)
+WARP(50, 50)     // UP/DOWNに関係なく青線で描画
+"
+            rows="10"
+            class="w-full p-3 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm font-mono bg-white"
+          ></textarea>
+
+          <div class="flex gap-3">
+            <button
+              onclick="executeCommands()"
+              class="flex-1 bg-blue-600 text-white font-semibold py-2 rounded-lg shadow-md hover:bg-blue-700 transition duration-150"
+            >
+              コード実行
+            </button>
+            <button
+              onclick="resetCanvas()"
+              class="flex-1 bg-red-500 text-white font-semibold py-2 rounded-lg shadow-md hover:bg-red-600 transition duration-150"
+            >
+              リセット
+            </button>
+          </div>
+
+          <div
+            class="text-xs text-gray-600 p-2 border-l-4 border-blue-400 bg-blue-50 rounded"
+          >
+            <p class="font-bold">現在の論理描画エリア: 200px x 200px</p>
+            <p>論理原点 **(0, 0)** は実座標 **(100, 100)** (左上) です。</p>
+            <ul class="list-disc list-inside mt-1">
+              <li>論理 **X** 軸: **上から下**へ伸びます (0→200) (垂直方向)</li>
+              <li>論理 **Y** 軸: **左から右**へ伸びます (0→200) (水平方向)</li>
+              <li>
+                `MOVE(x, y, f)`: ペン **UP** 時は**赤線**、**DOWN**
+                時は**黄色線**で移動。`f`は送り速度。
+              </li>
+              <li>`WARP(x, y)`: **UP/DOWNに関係なく**常に **青線**で移動。</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Canvasの取得とコンテキストの設定
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+
+      // 論理座標から実座標へのオフセット（キャンバスサイズ 400x400 に合わせて調整）
+      const ORIGIN_OFFSET_X = 100;
+      const ORIGIN_OFFSET_Y = 100;
+      const LOGICAL_WIDTH = 200; // 8マス * 25px
+      const LOGICAL_HEIGHT = 200; // 8マス * 25px
+
+      // エージェントの初期状態（論理座標を使用）
+      let agent = {
+        x: 0, // 論理座標 x
+        y: 0, // 論理座標 y
+        isDown: false, // ペンがDOWN (描画ON/赤線) か UP (描画OFF/黄色線) か。MOVEコマンドでの描画を制御
+        color: "black",
+      };
+
+      // 描画設定
+      ctx.lineWidth = 2;
+      ctx.lineCap = "round";
+
+      /**
+       * 論理座標をキャンバスの実座標に変換するヘルパー
+       * 論理X -> Real Y (上から下へ), 論理Y -> Real X (左から右へ)
+       * 論理原点 (0, 0) は実座標 (100, 100) (左上) に対応
+       */
+      function getRealCoords(x, y) {
+        // Real X (水平) は論理 Y で制御
+        const realX = y + ORIGIN_OFFSET_X;
+
+        // Real Y (垂直) は論理 X で制御
+        const realY = x + ORIGIN_OFFSET_Y;
+
+        return {
+          realX: realX,
+          realY: realY,
+        };
+      }
+
+      // エージェントの位置を示す点を描画
+      function drawAgent() {
+        const { realX, realY } = getRealCoords(agent.x, agent.y);
+
+        // エージェント（カーソル）を赤丸で描画
+        ctx.beginPath();
+        ctx.arc(realX, realY, 5, 0, Math.PI * 2);
+        ctx.fillStyle = "red";
+        ctx.fill();
+      }
+
+      /**
+       * エージェントを新しい座標に移動させ、必要に応じて描画する (MOVEコマンド)
+       * MOVEはUP/DOWNの状態に依存して赤線/黄色線を描画
+       * @param {number} newX - 新しい論理X座標
+       * @param {number} newY - 新しい論理Y座標
+       * @param {number | null} f - 送り速度 (描画には影響しないが引数として受け取る)
+       */
+      function moveAgent(newX, newY, f = null) {
+        const { realX: prevRealX, realY: prevRealY } = getRealCoords(
+          agent.x,
+          agent.y
+        );
+
+        const { realX: newRealX, realY: newRealY } = getRealCoords(newX, newY);
+
+        // 描画色の決定
+        if (agent.isDown) {
+          // UPコマンド後 (isDown = true) -> 赤線 (ペンを下ろしている状態)
+          ctx.strokeStyle = "red";
+        } else {
+          // DOWNコマンド後 (isDown = false) -> 黄色線 (ペンを上げている状態)
+          ctx.strokeStyle = "yellow";
+        }
+
+        // 線を描画
+        ctx.beginPath();
+        ctx.moveTo(prevRealX, prevRealY);
+        ctx.lineTo(newRealX, newRealY);
+        ctx.stroke();
+
+        // エージェントの位置を更新（論理座標）
+        agent.x = newX;
+        agent.y = newY;
+      }
+
+      /**
+       * エージェントを新しい座標に移動させ、青線で描画する (WARPコマンド)
+       * WARPはUP/DOWNの状態に依存せず常に青線で描画
+       * @param {number} newX - 新しい論理X座標
+       * @param {number} newY - 新しい論理Y座標
+       */
+      function warpAgent(newX, newY) {
+        const { realX: prevRealX, realY: prevRealY } = getRealCoords(
+          agent.x,
+          agent.y
+        );
+
+        const { realX: newRealX, realY: newRealY } = getRealCoords(newX, newY);
+
+        // WARPはUP/DOWNの状態に関わらず常に青線で描画 (ユーザーの要望)
+        ctx.strokeStyle = "blue";
+        ctx.beginPath();
+        ctx.moveTo(prevRealX, prevRealY);
+        ctx.lineTo(newRealX, newRealY);
+        ctx.stroke();
+
+        // エージェントの位置を更新（論理座標）
+        agent.x = newX;
+        agent.y = newY;
+      }
+
+      /**
+       * 25pxのマスを8x8で描画する背景グリッド
+       * 論理X:垂直(上から下), 論理Y:水平(左から右) の座標系に対応
+       */
+      function boardDisp() {
+        const gridSize = 25; // マスのサイズ
+        const numGrids = 8; // 8マス
+
+        // 盤面エリア（100, 100）から（300, 300）を黒とグレーの市松模様で描画
+        for (let x_idx = 0; x_idx < numGrids; x_idx++) {
+          // x_idx: 論理 X 軸のインデックス (0=上 to 7=下)
+          for (let y_idx = 0; y_idx < numGrids; y_idx++) {
+            // y_idx: 論理 Y 軸のインデックス (0=左 to 7=右)
+
+            // 市松模様の色設定 (論理座標のインデックスを使用: X + Y の合計で判定)
+            ctx.fillStyle = (x_idx + y_idx) % 2 === 0 ? "#2d2d2d" : "#757575";
+
+            // 実X座標 (水平方向): 論理 Y に依存。左端 (y_idx=0) から右へ
+            const realXStart = ORIGIN_OFFSET_X + y_idx * gridSize;
+
+            // 実Y座標 (垂直方向): 論理 X に依存。上端 (x_idx=0) から下へ
+            const realYStart = ORIGIN_OFFSET_Y + x_idx * gridSize;
+
+            ctx.fillRect(realXStart, realYStart, gridSize, gridSize);
+          }
+        }
+
+        // グリッドの外枠を描画
+        ctx.strokeStyle = "#000";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(
+          ORIGIN_OFFSET_X,
+          ORIGIN_OFFSET_Y,
+          LOGICAL_WIDTH,
+          LOGICAL_HEIGHT
+        );
+      }
+
+      /**
+       * 指令コードを解析し、実行するメイン関数
+       */
+      function executeCommands() {
+        // キャンバスをクリアし、背景を再描画
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        boardDisp();
+
+        // エージェントの状態は保持したまま、コード実行
+        const commandText = document.getElementById("commandInput").value;
+        const commands = commandText
+          .split("\n")
+          .map((cmd) => cmd.trim())
+          .filter((cmd) => cmd.length > 0 && !cmd.startsWith("//")); // コメント行を無視
+
+        for (const cmd of commands) {
+          const match = cmd.match(/^([A-Z]+)\s*(?:\(([^)]*)\))?$/);
+          if (!match) continue;
+
+          const commandName = match[1];
+          const argsString = match[2];
+          let args = [];
+          if (argsString) {
+            args = argsString.split(",").map((arg) => arg.trim());
+          }
+
+          console.log(`Executing: ${commandName} with args:`, args);
+
+          switch (commandName) {
+            case "HOME":
+              // 論理原点 (0, 0) に移動
+              agent.x = 0;
+              agent.y = 0;
+              break;
+            case "WARP":
+              const warpX = parseFloat(args[0]);
+              const warpY = parseFloat(args[1]);
+              if (!isNaN(warpX) && !isNaN(warpY)) {
+                // WARPは常に青線で描画
+                warpAgent(warpX, warpY);
+              }
+              break;
+            case "UP":
+              // UPでペンを下ろす (描画ON/赤線) - MOVEコマンドにのみ影響
+              agent.isDown = true;
+              break;
+            case "DOWN":
+              // DOWNでペンを上げる (描画OFF/黄色線) - MOVEコマンドにのみ影響
+              agent.isDown = false;
+              break;
+            case "MOVE":
+              const moveX = parseFloat(args[0]);
+              const moveY = parseFloat(args[1]);
+              const feedRate = parseFloat(args[2]); // 第三引数を送り速度fとして取得
+
+              if (!isNaN(moveX) && !isNaN(moveY)) {
+                moveAgent(moveX, moveY, feedRate);
+              }
+              break;
+            case "COLOR":
+              if (args[0]) {
+                agent.color = args[0];
+              }
+              break;
+            default:
+              console.warn(`Unknown command: ${commandName}`);
+              break;
+          }
+        }
+
+        // 最終的なエージェントの位置を描画
+        drawAgent();
+      }
+
+      /**
+       * キャンバスとエージェントの状態をリセットする
+       */
+      function resetCanvas() {
+        // キャンバスをクリア
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // エージェントの状態を初期値にリセット
+        agent.x = 0;
+        agent.y = 0;
+        agent.isDown = false; // 初期値はOFF
+        agent.color = "black";
+
+        // 背景とエージェントの初期位置を再描画
+        boardDisp();
+        drawAgent();
+      }
+
+      // ページロード時に初期描画を実行
+      window.onload = function () {
+        resetCanvas();
+      };
+    </script>
+  </body>
+</html>

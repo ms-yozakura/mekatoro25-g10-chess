@@ -1,0 +1,31 @@
+
+
+-----------------------------
+qmake時の注意
+-----------------------------
+qmake -project
+したときは、myapp.proの最後に
+
+    QT += core gui widgets serialport
+
+    # ビルド生成物の出力先をソースフォルダ外に分離する設定
+    OBJECTS_DIR = tmp/obj
+    MOC_DIR = tmp/moc
+    RCC_DIR = tmp/qrc
+
+を加える　
+
+
+-----------------------------
+コマンドについて
+-----------------------------
+*各軸マニュアル操作用(正転/逆転/停止)
+    ON+($axis) , ON-($axis) , OFF($axis)
+*原点復帰用
+    HOME
+*マニュアルキャリブレーション用
+    CALIB
+*早送り
+    WARP($x, $y)
+*普通送り
+    MOVE($x, $y, [$f])

@@ -1,0 +1,27 @@
+QWidget {
+  background-color: #35383d;
+  color: #e1e6ed;
+}
+QPushButton {
+  background-color: #4caf50;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-weight: bold;
+}
+QPushButton:hover {
+  background-color: #45a049;
+}
+
+#fenInputBox {
+  background-color: #2e3032;
+  height: 2em;
+  border: #e1e6ed 1px solid;
+  padding: 10px 20px;
+  border-radius: 8px;
+}
+#fenInputBox:active {
+  background-color: #46494c;
+  border: #e1e6ed 1px solid;
+}

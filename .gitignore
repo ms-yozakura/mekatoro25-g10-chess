@@ -1,0 +1,53 @@
+# ===========================
+# Qt / C++ Build Files
+# ===========================
+
+.DS_Store
+.qmake.stash
+Makefile
+myapp.pro
+myapp.app/
+tmp/
+
+# Build directories
+build/
+bin/
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Qt moc / ui / qrc generated files
+**/moc_*.cpp
+**/moc_*.h
+**/ui_*.h
+**/qrc_*.cpp
+
+# Qt Designer temporary files
+*.autosave
+*.user
+*.user.*.xml
+
+# ===========================
+# IDE / Editor
+# ===========================
+# Qt Creator
+*.pro.user
+*.pro.user.*
+*.creator
+*.creator.*
+
+# Visual Studio / VSCode / JetBrains IDEs
+.vscode/
+.idea/
+*.suo
+*.vcxproj.user
+
+# ===========================
+# Backup / Temp
+# ===========================
+*~
+*.swp
+*.tmp
