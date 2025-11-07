@@ -147,6 +147,11 @@ void SerialManager::sendOff(char axis)
     case 'z':
         m_moter_isON[2] = false;
         break;
+    case 'a':
+        m_moter_isON[0] = false;
+        m_moter_isON[1] = false;
+        m_moter_isON[2] = false;
+        break;
     }
     emit motorStatusChanged(axis, false);
 }

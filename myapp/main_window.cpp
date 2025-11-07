@@ -204,9 +204,7 @@ void MainWindow::on_moter_button_off_clicked()
         return;
     }
 
-    m_serialManager->sendOff('x');
-    m_serialManager->sendOff('y');
-    m_serialManager->sendOff('z');
+    m_serialManager->sendOff('a');
 }
 
 void MainWindow::on_calib_button_clicked()
@@ -441,6 +439,14 @@ void MainWindow::handleMotorStatusChanged(char axis, bool isOn)
             m_zmoter_button_p->setText("Z軸 ＋");
             m_zmoter_button_n->setText("Z軸 ー");
             break;
+        case 'a':
+            m_xmoter_button_p->setText("X軸 ＋");
+            m_xmoter_button_n->setText("X軸 ー");
+            m_ymoter_button_p->setText("Y軸 ＋");
+            m_ymoter_button_n->setText("Y軸 ー");
+            m_zmoter_button_p->setText("Z軸 ＋");
+            m_zmoter_button_n->setText("Z軸 ー");
+            break;
         }
     }
 }
@@ -454,7 +460,6 @@ void MainWindow::processAITurn()
     // 現在の盤面を m_game に確実に設定し直す（FEN解析ロジックを再利用）
     const QString &text = m_fenInput->text();
     std::string newBoard[8];
-    // ... FEN解析ロジックをここにコピー ...
     QStringList ranks = text.split('/');
     if (ranks.size() != 8)
         return;
