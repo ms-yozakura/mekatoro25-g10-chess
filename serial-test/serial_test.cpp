@@ -112,16 +112,16 @@ int main() {
     // ★★★ コマンドの送信と応答の受信 ★★★
     
     // 1. MOVEコマンドの送信
-    send_and_receive(fd, "MOVE(100,200)");
+    // send_and_receive(fd, "MOVE(100,200)");
     
     // 2. HOMEコマンドの送信
-    send_and_receive(fd, "HOME");
+    // send_and_receive(fd, "HOME");
 
     // 3. 無効なコマンドの送信
-    send_and_receive(fd, "TEST");
+    send_and_receive(fd, "UP");
 
 
-    send_and_receive(fd, "OFF");
+    send_and_receive(fd, "DOWN");
 
     // デバイスファイルをクローズ
     close(fd); 
