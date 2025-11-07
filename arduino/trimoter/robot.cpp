@@ -107,6 +107,10 @@ void Robot::processCommand(const char *command)
     int targetPos = 0;
     int motorIndex = -1;
 
+    char tempCommand[32];
+    strncpy(tempCommand, command, 31);
+    tempCommand[31] = '\0';
+
     // 1. ON+ (正転開始) / ON- (逆転開始) コマンド
     if (strncmp(command, "ON+", 3) == 0 || strncmp(command, "ON-", 3) == 0)
     {
@@ -170,25 +174,6 @@ void Robot::processCommand(const char *command)
         }
     }
 
-    // 3. MOVE (絶対位置移動) コマンド
-    if (strncmp(command, "MOVE(", 5) == 0)
-    {
-        if (sscanf(command + 5, "%c,%d)", &axis, &targetPos) == 2)
-        {
-            motorIndex = getMotorIndex(axis);
-
-            if (motorIndex != -1)
-            {
-                Serial.print("MOVE Motor ");
-                Serial.print(axis);
-                Serial.print(" to position: ");
-                Serial.println(targetPos);
-                motors[motorIndex]->moveTo(targetPos);
-                return;
-            }
-        }
-    }
-
     // 4. CALIB (キャリブレーション/初期化) コマンド: 全モーターの位置を0にリセット
     if (strcmp(command, "CALIB") == 0)
     {
@@ -236,16 +221,27 @@ void Robot::processCommand(const char *command)
         Serial.println("Z-Magnet DOWN: OFFz equivalent");
         return;
     }
+
     // 7. WARP (線形補間移動) コマンドの修正
     // フォーマット例: WARP(100.5,50) -> X座標100.5mm、Y座標50mmへ同時到達で移動
     // NOTE: sscanfの%f,%fは元のコードでint型変数に読み込んでいたため、
     // ここでは float 型変数 (targetX_mm, targetY_mm) に読み込むように修正します。
-    if (strncmp(command, "WARP(", 5) == 0 && command[strlen(command) - 1] == ')')
+    if ((strncmp(command, "MOVE(", 5) == 0 || strncmp(command, "WARP(", 5) == 0) && command[strlen(command) - 1] == ')')
     {
         float targetX_mm, targetY_mm;
-        // %f は float を読み込むためのフォーマット指定子
-        if (sscanf(command + 5, "%f,%f)", &targetX_mm, &targetY_mm) == 2)
+        char *data_start = tempCommand + 5;
+        char *data_end = tempCommand + strlen(tempCommand) - 1;
+
+        *data_end = '\0'; // 閉じ括弧をヌル終端に置き換え
+
+        char *x_str = strtok(data_start, ",");
+        char *y_str = strtok(NULL, ",");
+
+        if (x_str != NULL && y_str != NULL)
         {
+            targetX_mm = atof(x_str);
+            targetY_mm = atof(y_str); // ★修正2: atof(y_str) に変更
+
             Serial.print("WARP (Linear Move) to X:");
             Serial.print(targetX_mm, 2);
             Serial.print(", Y:");
