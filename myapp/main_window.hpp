@@ -51,6 +51,11 @@ private slots:
     // ユーザーの着手後にAIの着手を実行するための新しいスロット
     void processAITurn();
 
+    //画面キャプチャのスロット
+    void onVisionBoard(const QString& boardText);
+
+
+
 private:
     // 依存オブジェクトへのポインタ
     ChessGame *m_game;
@@ -70,6 +75,7 @@ private:
     QLabel *m_moveListLabel;
     QLabel *m_bestMoveLabel;
     QLabel *m_commandLabel;
+    QLabel *board_data;
     QLineEdit *m_fenInput;
     QLineEdit *m_moveInput;
     QPushButton *m_moveInputButton;
