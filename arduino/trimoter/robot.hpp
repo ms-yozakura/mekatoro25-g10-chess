@@ -49,8 +49,9 @@ private:
     static const int NUM_MOTORS = 3;
 
     // 座標変換定数 (仮設定: 実際の機械定数に合わせる必要があります)
-    static constexpr float STEPS_PER_MM_Z = 60.0;
-    static constexpr float STEPS_PER_MM_XY = 2.0;
+    static constexpr float STEPS_PER_MM_Z = 64.11; //+チューニング済み
+    static constexpr float STEPS_PER_MM_X = 4.78; //+チューニング済み
+    static constexpr float STEPS_PER_MM_Y = 3.87; //+チューニング済み
 
     // --- ★ キュー関連の追加 ---
     static const int MAX_COMMANDS = 10; // キューの最大サイズ
