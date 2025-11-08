@@ -26,6 +26,8 @@ void Robot::begin()
     Serial.begin(9600);
     Serial.println("Robot System Ready (CALIB/HOME/ON+/OFF/MOVE/COORD)");
 
+    // モーターの設定
+
     for (int i = 0; i < NUM_MOTORS; i++)
     {
         if (i == 0) // Z軸 (motorUni)
@@ -37,19 +39,15 @@ void Robot::begin()
         {
             motors[i]->setMaxSpeed(100.0);
             motors[i]->setAcceleration(600.0);
-            motors[2]->setPinsInverted(true, true, true);
+            motors[2]->setPinsInverted(true, true, true); // Y軸モータは何故かこの設定。理由は知らない（真顔）
         }
     }
-}
 
-// モーター駆動 (loop()内で常に呼び出す)
-// void Robot::runMotors()
-// {
-//     for (int i = 0; i < NUM_MOTORS; i++)
-//     {
-//         motors[i]->run();
-//     }
-// }
+    // キャリブレーションスイッチの設定
+    pinMode(XCALIB_PIN, INPUT_PULLUP);
+    pinMode(YCALIB_PIN, INPUT_PULLUP);
+    pinMode(ZCALIB_PIN, INPUT_PULLUP);
+}
 
 // 軸名からモーター配列のインデックスを取得
 int Robot::getMotorIndex(char axis)
@@ -249,7 +247,27 @@ void Robot::executeNextCommand()
         // shouldWait は false (即時完了) のまま
     }
 
-    // 5. HOME (原点復帰/動作) コマンド: X=0, Y=0, Z=0へ移動
+    // 5. AUTOCALIB (自動ホーミング) コマンド: 非同期でホーミングを開始
+    else if (strcmp(command, "AUTOCALIB") == 0)
+    {
+        Serial.println("AUTOCALIB START: Moving all axes simultaneously to find limit switches.");
+
+        // 状態を初期化
+        isAutoCalibrating = true;
+        axisHomed[0] = axisHomed[1] = axisHomed[2] = false;
+
+        // 全軸に対して負方向へ遠くに移動する目標を設定（同時に移動開始）
+        for (int i = 0; i < NUM_MOTORS; i++)
+        {
+            motors[i]->moveTo(-1000000);
+            // 速度調整が必要な場合はここで行います
+        }
+
+        shouldWait = true;         // 完了を runMotors() で監視する
+        isCommandExecuting = true; // モーター駆動を伴うコマンドとしてマーク
+    }
+
+    // 6. HOME (原点復帰/動作) コマンド: X=0, Y=0, Z=0へ移動
     else if (strcmp(command, "HOME") == 0)
     {
         Serial.println("HOME: Moving to X=0, Y=0, Z=0");
@@ -259,7 +277,7 @@ void Robot::executeNextCommand()
         shouldWait = true;
     }
 
-    // 6. COORD (座標確認) コマンド
+    // 7. COORD (座標確認) コマンド
     else if (strcmp(command, "COORD") == 0)
     {
         float current_coords[3];
@@ -274,7 +292,7 @@ void Robot::executeNextCommand()
         // shouldWait は false (即時完了) のまま
     }
 
-    // 7. UP/DOWN コマンド (Z軸移動)
+    // 8. UP/DOWN コマンド (Z軸移動)
     else if (strcmp(command, "UP") == 0)
     {
         Serial.println("Z-Magnet UP: Move to 10mm");
@@ -294,7 +312,7 @@ void Robot::executeNextCommand()
         shouldWait = true;
     }
 
-    // 8. WARP/MOVE (線形補間移動) コマンド
+    // 9. WARP/MOVE (線形補間移動) コマンド
     else if (strncmp(command, "MOVE(", 5) == 0 && command[strlen(command) - 1] == ')')
     {
         // ... (MOVE/WARPの複雑なパースと移動開始ロジックをここに移植) ...
@@ -355,7 +373,7 @@ void Robot::executeNextCommand()
         }
     }
 
-    // 8. WARP/MOVE (線形補間移動) コマンド
+    // 10. WARP/MOVE (線形補間移動) コマンド
     else if (strncmp(command, "WARP(", 5) == 0 && command[strlen(command) - 1] == ')')
     {
         // ... (MOVE/WARPの複雑なパースと移動開始ロジックをここに移植) ...
@@ -445,9 +463,54 @@ void Robot::runMotors()
         motors[i]->run();
     }
 
+    // ★ 新規追加: AUTOCALIBの非同期ホーミング監視
+    if (isAutoCalibrating)
+    {
+        bool allHomed = true;
+
+        for (int i = 0; i < NUM_MOTORS; i++)
+        {
+            if (!axisHomed[i]) // まだホーミングが完了していない軸をチェック
+            {
+                // スイッチが押されたかチェック (LOWで接触と仮定)
+                if (digitalRead(axisPins[i]) == LOW)
+                {
+                    // 接触を検出！
+                    motors[i]->stop();                // 減速停止
+                    motors[i]->setCurrentPosition(0); // 原点位置に設定
+
+                    Serial.print(axisNames[i]);
+                    Serial.println(" axis HOMED and position set to 0.");
+
+                    axisHomed[i] = true; // 完了フラグを立てる
+                }
+                else
+                {
+                    allHomed = false; // まだ完了していない軸がある
+                }
+            }
+        }
+
+        // 全ての軸がホーミング完了したかチェック
+        if (allHomed)
+        {
+            Serial.println("AUTOCALIB finished successfully.");
+
+            // AUTOCALIBの状態をリセット
+            isAutoCalibrating = false;
+
+            // 実行状態をリセットし、キューの先頭を進める
+            isCommandExecuting = false;
+            queueTail = (queueTail + 1) % MAX_COMMANDS;
+        }
+
+        return; // AUTOCALIBが実行中は、その下の通常の終了判定ロジックをスキップ
+    }
+
     // 2. 実行中のキューコマンドの終了判定
     if (isCommandExecuting)
     {
+
         // X, Y, Z軸全ての移動が完了したかチェック
         // run() が呼び出されることで motors[i]->distanceToGo() が 0 になる
         if (motors[0]->distanceToGo() == 0 &&
@@ -463,22 +526,6 @@ void Robot::runMotors()
 
             // 実行状態をリセット
             isCommandExecuting = false;
-
-            // // motorのセッティングをリセット
-            // for (int i = 0; i < NUM_MOTORS; i++)
-            // {
-            //     if (i == 0) // Z軸 (motorUni)
-            //     {
-            //         motors[i]->setMaxSpeed(500.0);
-            //         motors[i]->setAcceleration(10000.0);
-            //     }
-            //     else // X, Y軸 (motorBip1, motorBip2)
-            //     {
-            //         motors[i]->setMaxSpeed(300.0);
-            //         motors[i]->setAcceleration(600.0);
-            //         motors[2]->setPinsInverted(false, true, true);
-            //     }
-            // }
 
             // キューの先頭 (tail) を進める
             queueTail = (queueTail + 1) % MAX_COMMANDS;

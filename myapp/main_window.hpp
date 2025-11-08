@@ -37,6 +37,7 @@ private slots:
     void on_moter_button_n_clicked(char axis);
     void on_moter_button_off_clicked();
     void on_calib_button_clicked();
+    void on_autocalib_button_clicked();
 
     void on_moveinput_button_clicked();
 
@@ -65,6 +66,7 @@ private:
     QPushButton *m_zmoter_button_n;
     QPushButton *m_moter_button_off;
     QPushButton *m_calib_button;
+    QPushButton *m_autocalib_button;
     QLabel *m_moveListLabel;
     QLabel *m_bestMoveLabel;
     QLabel *m_commandLabel;

@@ -207,6 +207,7 @@ std::string knightRoute(std::string rows[8], Move move)
     }
 
     text += "DOWN\n";
+    text += "AUTOCALIB\n";
 
     return text;
 }

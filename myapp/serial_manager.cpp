@@ -96,7 +96,7 @@ void SerialManager::sendCommand(const std::string &command)
 
 void SerialManager::sendOnPlus(char axis)
 {
-    sendCommand(std::string("ON+(") + axis+')');
+    sendCommand(std::string("ON+(") + axis + ')');
 
     switch (axis)
     {
@@ -115,7 +115,7 @@ void SerialManager::sendOnPlus(char axis)
 
 void SerialManager::sendOnMinus(char axis)
 {
-    sendCommand(std::string("ON-(") + axis+')');
+    sendCommand(std::string("ON-(") + axis + ')');
 
     switch (axis)
     {
@@ -134,7 +134,7 @@ void SerialManager::sendOnMinus(char axis)
 
 void SerialManager::sendOff(char axis)
 {
-    sendCommand(std::string("OFF(") + axis+')');
+    sendCommand(std::string("OFF(") + axis + ')');
 
     switch (axis)
     {
@@ -163,6 +163,13 @@ void SerialManager::sendCalib()
     // 今回はコマンドを送るだけとする
 }
 
+void SerialManager::sendAutoCalib()
+{
+    sendCommand("AUTOCALIB");
+    // キャリブレーションがモーターON/OFFの状態を変えるなら、ここで m_moter_isON を更新
+    // 今回はコマンドを送るだけとする
+}
+
 // void SerialManager::sendLongCommand(const std::string &command)
 // {
 //     std::stringstream ss(command); // ストリームに変換
@@ -186,7 +193,6 @@ void SerialManager::sendCalib()
 //     }
 // }
 
-
 void SerialManager::processLongCommandSlot(const QString &command)
 {
     if (m_fd < 0)
@@ -194,7 +200,7 @@ void SerialManager::processLongCommandSlot(const QString &command)
         emit serialError("Serial port is not open. Cannot send command: " + command);
         return;
     }
-    
+
     // QStringをstd::stringに変換
     std::string commandStr = command.toStdString();
 
@@ -213,7 +219,7 @@ void SerialManager::processLongCommandSlot(const QString &command)
         if (!segment.empty() && segment.find("//") != 0)
         {
             // sendCommandが send_and_receive (usleepを含む) を呼び出す
-            sendCommand(segment); 
+            sendCommand(segment);
         }
     }
 }

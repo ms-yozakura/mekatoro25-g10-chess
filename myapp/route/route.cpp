@@ -64,6 +64,7 @@ std::string normalRoute(/*std::string rows[8], */ Move move)
     text += "UP\n";
     text += "MOVE(" + std::to_string(nr) + "," + std::to_string(nc) + ")\n";
     text += "DOWN\n";
+    text += "AUTOCALIB\n";
 
     return text;
 }

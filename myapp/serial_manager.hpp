@@ -56,6 +56,7 @@ public slots:
     void sendOnMinus(char axis);
     void sendOff(char axis);
     void sendCalib();
+    void sendAutoCalib();
 
     // コマンド送信（マニュアル）
     // void sendLongCommand(const std::string &command); // 数行

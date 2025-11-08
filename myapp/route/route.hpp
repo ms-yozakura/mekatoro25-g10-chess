@@ -18,7 +18,7 @@
 
 #define CELLSIZE 25.0 // マスのサイズは25mm
 
-#define TOMB {-50.0, 50.0}
+#define TOMB {-15.0, 100.0}
 
 std::string command(std::string[8], Move);
 std::string normalRoute(/*std::string[8], */ Move);

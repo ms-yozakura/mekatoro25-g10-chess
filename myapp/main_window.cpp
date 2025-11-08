@@ -77,6 +77,7 @@ void MainWindow::setupUI()
     m_zmoter_button_n = new QPushButton("Z軸 ー");
     m_moter_button_off = new QPushButton("モーター OFF");
     m_calib_button = new QPushButton("キャリブレーション");
+    m_autocalib_button = new QPushButton("自動キャリブレーション");
 
     // 初期FEN設定 (元の main.cpp から移動)
     QString startFEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
@@ -115,6 +116,7 @@ void MainWindow::setupUI()
     layout2->addWidget(m_commandLabel);
     layout2->addLayout(moveInputlayout);
     layout2->addWidget(m_calib_button);
+    layout2->addWidget(m_autocalib_button);
     layout2->addLayout(x_buttonlayout);
     layout2->addLayout(y_buttonlayout);
     layout2->addLayout(z_buttonlayout);
@@ -147,6 +149,7 @@ void MainWindow::setupConnections()
 
     connect(m_moter_button_off, &QPushButton::clicked, this, &MainWindow::on_moter_button_off_clicked);
     connect(m_calib_button, &QPushButton::clicked, this, &MainWindow::on_calib_button_clicked);
+    connect(m_autocalib_button, &QPushButton::clicked, this, &MainWindow::on_autocalib_button_clicked);
 
     // FEN入力 (そのまま)
     connect(m_fenInput, &QLineEdit::textChanged, this, &MainWindow::on_fenInput_textChanged);
@@ -216,6 +219,16 @@ void MainWindow::on_calib_button_clicked()
     }
 
     m_serialManager->sendCalib();
+}
+void MainWindow::on_autocalib_button_clicked()
+{
+    if (!m_serialManager->isPortOpen())
+    {
+        QMessageBox::warning(this, "Warning", "Serial port is not opened. Cannot operate this action.");
+        return;
+    }
+
+    m_serialManager->sendAutoCalib();
 }
 
 void MainWindow::on_moveinput_button_clicked()

@@ -38,6 +38,12 @@ private:
     static const int BIP2_PIN1 = 8;
     static const int BIP2_PIN2 = 9;
 
+    //キャリブレートスイッチ
+    static const int XCALIB_PIN=10; // X軸キャリブレーションスイッチ
+    static const int YCALIB_PIN=11; // Y軸キャリブレーションスイッチ
+    static const int ZCALIB_PIN=12; // Z軸キャリブレーションスイッチ
+
+
     // モーターインスタンス
     AccelStepper motorUni;
     AccelStepper motorBip1;
