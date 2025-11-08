@@ -24,6 +24,13 @@ std::string command(std::string rows[8], Move move)
 
     std::string text = "";
 
+
+    // コマの退場は先にやる
+    char end_type = rows[move.second.first][move.second.second];
+    if (end_type != '*')
+        text += eliminateRoute(rows, {{move.second.first, move.second.second}, TOMB}); // TOMBは仮
+
+
     // 動かすコマの種類を判定
     char type = rows[move.first.first][move.first.second];
     bool isWhite = std::isupper(type); // 白か黒か
@@ -40,11 +47,6 @@ std::string command(std::string rows[8], Move move)
     // 普通の動き
     else
         text += normalRoute(/*rows, */ move);
-
-    // コマの退場について
-    char end_type = rows[move.second.first][move.second.second];
-    if (end_type != '*')
-        text += eliminateRoute(rows, {{move.second.first, move.second.second}, TOMB}); // 未実装
 
     return text;
 }
