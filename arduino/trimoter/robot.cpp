@@ -6,9 +6,9 @@ Robot::Robot()
     // AccelStepper インスタンスの初期化
     // Z軸 (Uni): FULL4WIRE (ピン順序は元のコードから維持)
     : motorUni(AccelStepper::FULL4WIRE, UNI_PIN1, UNI_PIN3, UNI_PIN4, UNI_PIN2),
-      // X軸 (Bip1): FULL4WIRE (ピン3,4は0)
+      // X軸 (Bip1): DRIVER
       motorBip1(AccelStepper::DRIVER, BIP1_PIN1, BIP1_PIN2),
-      // Y軸 (Bip2): FULL4WIRE (ピン3,4は0)
+      // Y軸 (Bip2): DRIVER
       motorBip2(AccelStepper::DRIVER, BIP2_PIN1, BIP2_PIN2)
 {
     // モーター配列と軸名の設定
@@ -18,6 +18,10 @@ Robot::Robot()
     axisNames[0] = "z";
     axisNames[1] = "x";
     axisNames[2] = "y";
+
+    // ★ MultiStepperにX軸とY軸のモーターを登録
+    xySteppers.addStepper(motorBip1); // インデックス0: X軸
+    xySteppers.addStepper(motorBip2); // インデックス1: Y軸
 }
 
 // 初期設定: Serial開始とMaxSpeed/Acceleration の設定
@@ -37,8 +41,8 @@ void Robot::begin()
         }
         else // X, Y軸 (motorBip1, motorBip2)
         {
-            motors[i]->setMaxSpeed(100.0);
-            motors[i]->setAcceleration(600.0);
+            motors[i]->setMaxSpeed(200.0);
+            motors[i]->setAcceleration(800.0);
             motors[2]->setPinsInverted(true, true, true); // Y軸モータは何故かこの設定。理由は知らない（真顔）
         }
     }
@@ -46,7 +50,6 @@ void Robot::begin()
     // キャリブレーションスイッチの設定
     pinMode(XCALIB_PIN, INPUT_PULLUP);
     pinMode(YCALIB_PIN, INPUT_PULLUP);
-    pinMode(ZCALIB_PIN, INPUT_PULLUP);
 }
 
 // 軸名からモーター配列のインデックスを取得
@@ -122,16 +125,29 @@ void Robot::processCommand(const char *command)
             {
                 Serial.print(axis);
                 Serial.print("-Motor ON");
+
+                // 無限に移動するための遠い目標を設定
                 long current = motors[motorIndex]->currentPosition();
+
+                // ON+は正の方向、ON-は負の方向に目標を設定
                 long target = (command[2] == '+') ? current + 1000000000L : current - 1000000000L;
+
                 motors[motorIndex]->moveTo(target);
-                // motors[motorIndex]->setSpeed(motors[motorIndex]->maxSpeed());
+
+                // ★ setSpeed() を使用して、方向を示す符号付きの速度を設定
+                float speed = motors[motorIndex]->maxSpeed();
+                if (command[2] == '-')
+                {
+                    speed = -speed; // 逆方向の場合は速度を負にする
+                }
+                // setSpeed() が呼び出されると、そのモーターは他の協調制御よりもこの速度を優先します
+                motors[motorIndex]->setSpeed(speed);
+
                 Serial.println((command[2] == '+') ? "+" : "-");
                 return;
             }
         }
     }
-
     if (strncmp(command, "OFF(", 4) == 0)
     {
         float current_coords[3];
@@ -151,6 +167,7 @@ void Robot::processCommand(const char *command)
                 for (const auto &motor : motors)
                 {
                     motor->stop();
+                    motor->setSpeed(0); // ★ 追加: 速度を強制的に0に設定
                 }
                 return;
             }
@@ -168,6 +185,7 @@ void Robot::processCommand(const char *command)
                 Serial.print(current_coords[2], 2);
                 Serial.println(F(")"));
                 motors[motorIndex]->stop();
+                motors[motorIndex]->setSpeed(0); // ★ 追加: 速度を強制的に0に設定
                 return;
             }
         }
@@ -250,30 +268,62 @@ void Robot::executeNextCommand()
     // 5. AUTOCALIB (自動ホーミング) コマンド: 非同期でホーミングを開始
     else if (strcmp(command, "AUTOCALIB") == 0)
     {
-        Serial.println("AUTOCALIB START: Moving all axes simultaneously to find limit switches.");
+        Serial.println("AUTOCALIB START: Moving X and Y axes simultaneously to find limit switches.");
 
         // 状態を初期化
         isAutoCalibrating = true;
-        axisHomed[0] = axisHomed[1] = axisHomed[2] = false;
 
-        // 全軸に対して負方向へ遠くに移動する目標を設定（同時に移動開始）
-        for (int i = 0; i < NUM_MOTORS; i++)
+        // Z軸 (motors[0]) はホーミング対象外として最初から完了とする
+        axisHomed[0] = true;
+
+        // X軸とY軸を未完了として初期化
+        axisHomed[1] = false; // X軸
+        axisHomed[2] = false; // Y軸
+
+        // X軸とY軸 (i=1, i=2) のみに対して移動目標を設定
+        for (int i = 1; i < NUM_MOTORS; i++)
         {
-            motors[i]->moveTo(-1000000);
-            // 速度調整が必要な場合はここで行います
+            // ★ 修正1: 速度と加速度を大幅に上げる
+            motors[i]->setMaxSpeed(8000.0);
+            motors[i]->setAcceleration(16000.0);
+
+            // ★ 修正2: 負方向への移動開始速度を強制的に設定し、即座に高速移動を開始
+            motors[i]->setSpeed(-8000.0); // 負方向への移動なので負の値
+
+            motors[i]->moveTo(-1000000); // 負方向へ移動目標を設定
         }
 
-        shouldWait = true;         // 完了を runMotors() で監視する
-        isCommandExecuting = true; // モーター駆動を伴うコマンドとしてマーク
+        shouldWait = true;
+        isCommandExecuting = true;
     }
-
-    // 6. HOME (原点復帰/動作) コマンド: X=0, Y=0, Z=0へ移動
+    // 6. HOME (原点復帰/動作) コマンド: X=0, Y=0, Z=0へ移動 (WARP(0,0)と同様に直線補間を使用)
     else if (strcmp(command, "HOME") == 0)
     {
-        Serial.println("HOME: Moving to X=0, Y=0, Z=0");
-        motors[1]->moveTo(0); // X軸 (motorBip1) を絶対位置0へ移動
-        motors[2]->moveTo(0); // Y軸 (motorBip2) を絶対位置0へ移動
-        motors[0]->moveTo(0); // Z軸 (motorUni) を絶対位置0へ移動
+        Serial.println("HOME: Moving to X=0, Y=0, Z=0 (Linear Move / WARP Speed)");
+
+        // Z軸の移動 (単独)
+        motors[0]->moveTo(0);
+
+        // X軸とY軸の移動 (MultiStepperで協調移動)
+        long xyTargetPositions[2];
+        xyTargetPositions[0] = 0; // X軸目標
+        xyTargetPositions[1] = 0; // Y軸目標
+
+        // ★ WARPと同じ速度 (100%) を適用
+        float standardMaxSpeed = 100.0;
+        float standardAcceleration = 600.0;
+
+        float newMaxSpeed = standardMaxSpeed * 2.0;
+
+        // 速度と加速度を標準値 (100%) に設定
+        motors[1]->setMaxSpeed(newMaxSpeed);
+        motors[2]->setMaxSpeed(newMaxSpeed);
+        motors[1]->setAcceleration(standardAcceleration);
+        motors[2]->setAcceleration(standardAcceleration);
+
+        // X/Y軸の協調移動開始
+        xySteppers.moveTo(xyTargetPositions);
+
         shouldWait = true;
     }
 
@@ -296,7 +346,7 @@ void Robot::executeNextCommand()
     else if (strcmp(command, "UP") == 0)
     {
         Serial.println("Z-Magnet UP: Move to 10mm");
-        float targetZ_mm = 15;
+        float targetZ_mm = 18.3;
         long targetZ_steps = (long)(targetZ_mm * STEPS_PER_MM_Z);
         motors[0]->moveTo(targetZ_steps); // Z軸 (motorUni) を絶対位置 100mmへ移動
         shouldWait = true;
@@ -311,15 +361,12 @@ void Robot::executeNextCommand()
         motors[0]->moveTo(targetZ_steps); // Z軸 (motorUni) を絶対位置 -100mmへ移動
         shouldWait = true;
     }
-
-    // 9. WARP/MOVE (線形補間移動) コマンド
-    else if (strncmp(command, "MOVE(", 5) == 0 && command[strlen(command) - 1] == ')')
+    // 9. WARP/MOVE (線形補間移動) コマンド: MultiStepperで直線補間を実現
+    else if ((strncmp(command, "MOVE(", 5) == 0 || strncmp(command, "WARP(", 5) == 0) && command[strlen(command) - 1] == ')')
     {
-        // ... (MOVE/WARPの複雑なパースと移動開始ロジックをここに移植) ...
-        // 既存の MOVE/WARP ロジックのコピーを貼り付け、最後の 'return;' を削除
-
         float targetX_mm, targetY_mm;
-        char *data_start = tempCommand + 5;
+        // MOVE(X,Y) または WARP(X,Y) に合わせて data_start を調整
+        char *data_start = strncmp(command, "MOVE(", 5) == 0 ? tempCommand + 5 : tempCommand + 5;
         char *data_end = tempCommand + strlen(tempCommand) - 1;
 
         *data_end = '\0'; // 閉じ括弧をヌル終端に置き換え
@@ -329,10 +376,11 @@ void Robot::executeNextCommand()
 
         if (x_str != NULL && y_str != NULL)
         {
-            targetX_mm = atof(x_str);
-            targetY_mm = atof(y_str);
+            targetX_mm = atof(x_str) + BOARD_XZERO;
+            targetY_mm = atof(y_str) + BOARD_YZERO;
 
-            Serial.print("MOVE (Linear Move) to X:");
+            Serial.print(command[0] == 'M' ? "MOVE" : "WARP");
+            Serial.print(" (Linear Move) to X:");
             Serial.print(targetX_mm, 2);
             Serial.print(", Y:");
             Serial.println(targetY_mm, 2);
@@ -343,96 +391,52 @@ void Robot::executeNextCommand()
             long targetX_steps = (long)(targetX_mm * STEPS_PER_MM_X);
             long targetY_steps = (long)(targetY_mm * STEPS_PER_MM_Y);
 
+            // ★ MultiStepper用の目標位置配列
+            long xyTargetPositions[2];
+            xyTargetPositions[0] = targetX_steps; // MultiStepperのインデックス0 = X軸
+            xyTargetPositions[1] = targetY_steps; // MultiStepperのインデックス1 = Y軸
+
             long currentX_steps = motors[X_INDEX]->currentPosition();
             long currentY_steps = motors[Y_INDEX]->currentPosition();
 
-            long deltaX = labs(targetX_steps - currentX_steps);
-            long deltaY = labs(targetY_steps - currentY_steps);
-
-            long maxDelta = max(deltaX, deltaY);
-
-            if (maxDelta == 0)
+            // 目標位置に既にいるかチェック
+            if (currentX_steps == targetX_steps && currentY_steps == targetY_steps)
             {
                 Serial.println("Already at target.");
-                // shouldWait は false (即時完了) のまま
             }
             else
             {
-                float maxSpeed = motors[X_INDEX]->maxSpeed() / 10;
+                // X/Y軸の標準設定速度を取得
+                // WARP速度を100%として、MOVE速度を50%にする
+                float standardMaxSpeed = 100.0; // motors[1]->maxSpeed() で取得しても良い
+                float speedFactor = 1.0;
 
-                // motors[X_INDEX]->setSpeed(maxSpeed * ((float)deltaX / maxDelta));
-                // motors[X_INDEX]->setSpeed(0);
-                motors[X_INDEX]->moveTo(targetX_steps);
+                if (strncmp(command, "MOVE(", 5) == 0)
+                {
+                    speedFactor = 1.5; // MOVE: 80%
+                }
+                else // WARP
+                {
+                    speedFactor = 2.0; // WARP: 200%
+                }
 
-                // motors[Y_INDEX]->setSpeed(maxSpeed * ((float)deltaY / maxDelta));
-                // motors[X_INDEX]->setSpeed(0);
-                motors[Y_INDEX]->moveTo(targetY_steps);
+                float newMaxSpeed = standardMaxSpeed * speedFactor;
+                float newAcceleration = motors[X_INDEX]->acceleration() * speedFactor; // 加速度も速度に合わせて調整
+
+                // ★ 速度と加速度を一時的に変更
+                motors[X_INDEX]->setMaxSpeed(newMaxSpeed);
+                motors[Y_INDEX]->setMaxSpeed(newMaxSpeed);
+                motors[X_INDEX]->setAcceleration(newAcceleration);
+                motors[Y_INDEX]->setAcceleration(newAcceleration);
+
+                // MultiStepperの moveTo を呼び出す (新しい設定速度で動作する)
+                xySteppers.moveTo(xyTargetPositions);
 
                 shouldWait = true;
             }
         }
     }
 
-    // 10. WARP/MOVE (線形補間移動) コマンド
-    else if (strncmp(command, "WARP(", 5) == 0 && command[strlen(command) - 1] == ')')
-    {
-        // ... (MOVE/WARPの複雑なパースと移動開始ロジックをここに移植) ...
-        // 既存の MOVE/WARP ロジックのコピーを貼り付け、最後の 'return;' を削除
-
-        float targetX_mm, targetY_mm;
-        char *data_start = tempCommand + 5;
-        char *data_end = tempCommand + strlen(tempCommand) - 1;
-
-        *data_end = '\0'; // 閉じ括弧をヌル終端に置き換え
-
-        char *x_str = strtok(data_start, ",");
-        char *y_str = strtok(NULL, ",");
-
-        if (x_str != NULL && y_str != NULL)
-        {
-            targetX_mm = atof(x_str);
-            targetY_mm = atof(y_str);
-
-            Serial.print("WARP (Linear Move) to X:");
-            Serial.print(targetX_mm, 2);
-            Serial.print(", Y:");
-            Serial.println(targetY_mm, 2);
-
-            const int X_INDEX = 1;
-            const int Y_INDEX = 2;
-
-            long targetX_steps = (long)(targetX_mm * STEPS_PER_MM_X);
-            long targetY_steps = (long)(targetY_mm * STEPS_PER_MM_Y);
-
-            long currentX_steps = motors[X_INDEX]->currentPosition();
-            long currentY_steps = motors[Y_INDEX]->currentPosition();
-
-            long deltaX = labs(targetX_steps - currentX_steps);
-            long deltaY = labs(targetY_steps - currentY_steps);
-
-            long maxDelta = max(deltaX, deltaY);
-
-            if (maxDelta == 0)
-            {
-                Serial.println("Already at target.");
-                // shouldWait は false (即時完了) のまま
-            }
-            else
-            {
-                float maxSpeed = motors[X_INDEX]->maxSpeed();
-
-                // motors[X_INDEX]->setSpeed(maxSpeed * ((float)deltaX / maxDelta));
-                // motors[X_INDEX]->setSpeed(0);
-                motors[X_INDEX]->moveTo(targetX_steps);
-
-                // motors[Y_INDEX]->setSpeed(maxSpeed * ((float)deltaY / maxDelta));
-                // motors[X_INDEX]->setSpeed(0);
-                motors[Y_INDEX]->moveTo(targetY_steps);
-
-                shouldWait = true;
-            }
-        }
-    }
     else
     {
         Serial.print("Error: Unknown command or invalid format: ");
@@ -458,35 +462,64 @@ void Robot::executeNextCommand()
 void Robot::runMotors()
 {
     // 1. 全てのモーターを駆動
-    for (int i = 0; i < NUM_MOTORS; i++)
-    {
-        motors[i]->run();
-    }
+    // run() が MultiStepper によって設定された協調ステップを実行する
 
-    // ★ 新規追加: AUTOCALIBの非同期ホーミング監視
+    // Z軸 (motors[0]) は単独で駆動
+    motors[0]->run();
+
+    // X軸とY軸は MultiStepper で協調駆動
+    // ★ MultiStepper::run() を呼び出すことで、XとYが同時に目標に到達するようにステップが調整される
+    xySteppers.run();
+    // ★ AUTOCALIBの非同期ホーミング監視 (修正後)
     if (isAutoCalibrating)
     {
         bool allHomed = true;
 
-        for (int i = 0; i < NUM_MOTORS; i++)
+        for (int i = 1; i < NUM_MOTORS; i++) // X軸 (i=1) と Y軸 (i=2) のみループ
         {
             if (!axisHomed[i]) // まだホーミングが完了していない軸をチェック
             {
-                // スイッチが押されたかチェック (LOWで接触と仮定)
-                if (digitalRead(axisPins[i]) == LOW)
+                int pinIndex = i - 1;
+
+                // フェーズ1: スイッチ探索中 (ターゲットが負の大きな値)
+                // targetPosition() < 0 で、まだリバウンド移動を開始していない軸を判定
+                if (motors[i]->targetPosition() < 0)
                 {
-                    // 接触を検出！
-                    motors[i]->stop();                // 減速停止
-                    motors[i]->setCurrentPosition(0); // 原点位置に設定
+                    if (digitalRead(axisPins[pinIndex]) == LOW) // 接触を検出！
+                    {
+                        motors[i]->stop();
 
-                    Serial.print(axisNames[i]);
-                    Serial.println(" axis HOMED and position set to 0.");
+                        // ① 接触位置を負の REBOUND_STEPS に設定
+                        // これにより、目標位置 0 がリバウンド後の原点となる (ズレ防止)
+                        motors[i]->setCurrentPosition(-REBOUND_STEPS);
 
-                    axisHomed[i] = true; // 完了フラグを立てる
+                        // リバウンド移動の速度と加速度を設定 (安全のため低速に)
+                        motors[i]->setMaxSpeed(500.0);
+                        motors[i]->setAcceleration(1000.0);
+
+                        // ② 正方向へリバウンド移動を開始 (目標位置 0 まで移動)
+                        motors[i]->moveTo(0);
+
+                        Serial.print(axisNames[i]);
+                        Serial.println(" axis HOMED (Started REBOUND move to 0).");
+                    }
                 }
-                else
+
+                // フェーズ2: リバウンド移動中/完了 (ターゲットが 0)
+                else if (motors[i]->targetPosition() == 0)
                 {
-                    allHomed = false; // まだ完了していない軸がある
+                    if (motors[i]->distanceToGo() == 0) // リバウンド完了
+                    {
+                        // リバウンド完了！ currentPosition() は 0 になっている。
+                        axisHomed[i] = true; // 最終的な完了フラグを立てる
+                        Serial.print(axisNames[i]);
+                        Serial.println(" axis REBOUND finished. Position confirmed at 0.");
+                    }
+                }
+
+                if (!axisHomed[i])
+                {
+                    allHomed = false; // XまたはYがまだ完了していない
                 }
             }
         }
@@ -494,25 +527,26 @@ void Robot::runMotors()
         // 全ての軸がホーミング完了したかチェック
         if (allHomed)
         {
-            Serial.println("AUTOCALIB finished successfully.");
+            Serial.println("AUTOCALIB finished successfully. Restoring motor speed.");
 
-            // AUTOCALIBの状態をリセット
+            // ★ 速度を元の設定に戻す (元の設定値: 200.0 / 800.0)
+            motors[1]->setMaxSpeed(200.0);
+            motors[2]->setMaxSpeed(200.0);
+            motors[1]->setAcceleration(800.0);
+            motors[2]->setAcceleration(800.0);
+
+            // ... (後処理) ...
             isAutoCalibrating = false;
-
-            // 実行状態をリセットし、キューの先頭を進める
             isCommandExecuting = false;
             queueTail = (queueTail + 1) % MAX_COMMANDS;
         }
 
         return; // AUTOCALIBが実行中は、その下の通常の終了判定ロジックをスキップ
     }
-
-    // 2. 実行中のキューコマンドの終了判定
     if (isCommandExecuting)
     {
 
         // X, Y, Z軸全ての移動が完了したかチェック
-        // run() が呼び出されることで motors[i]->distanceToGo() が 0 になる
         if (motors[0]->distanceToGo() == 0 &&
             motors[1]->distanceToGo() == 0 &&
             motors[2]->distanceToGo() == 0)
@@ -523,6 +557,12 @@ void Robot::runMotors()
 
             // 座標を再確認 (オプション)
             printCoordinates();
+
+            // ★ X/Y軸の速度/加速度を元の設定に戻す (MOVE/WARPで変更した場合のクリーンアップ)
+            motors[1]->setMaxSpeed(200.0);     // X軸の元の設定
+            motors[2]->setMaxSpeed(200.0);     // Y軸の元の設定
+            motors[1]->setAcceleration(800.0); // X軸の元の設定
+            motors[2]->setAcceleration(800.0); // Y軸の元の設定
 
             // 実行状態をリセット
             isCommandExecuting = false;

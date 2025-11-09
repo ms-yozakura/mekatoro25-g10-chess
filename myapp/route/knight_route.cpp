@@ -12,33 +12,36 @@ RotationInfo getRotationInfo(int dr, int dc)
     return info;
 }
 
-
-bool isObstacle(const std::string rows[8], int start_r, int start_c, const RotationInfo& rot, int rel_r_norm, int rel_c_norm) {
+bool isObstacle(const std::string rows[8], int start_r, int start_c, const RotationInfo &rot, int rel_r_norm, int rel_c_norm)
+{
     int check_r, check_c;
 
     // 座標の逆変換 (論理は変更なし)
-    if (!rot.swap_axes) {
+    if (!rot.swap_axes)
+    {
         check_r = start_r + rot.dr_sign * rel_r_norm;
         check_c = start_c + rot.dc_sign * rel_c_norm;
-    } else {
+    }
+    else
+    {
         check_r = start_r + rot.dr_sign * rel_c_norm;
         check_c = start_c + rot.dc_sign * rel_r_norm;
     }
 
     // 盤面の範囲チェック
-    if (check_r < 0 || check_r > 7 || check_c < 0 || check_c > 7) return false;
+    if (check_r < 0 || check_r > 7 || check_c < 0 || check_c > 7)
+        return false;
 
     // 修正点: アルファベット（駒）がある場合を障害物とする
     char cell_content = rows[check_r][check_c];
-    
+
     // '*' は障害物ではないため無視
-    if (cell_content == ' ') return false; // 空白マスも障害物ではない
+    if (cell_content == ' ')
+        return false; // 空白マスも障害物ではない
 
     // cell_content がアルファベット（駒）であれば true
     return std::isalpha(static_cast<unsigned char>(cell_content));
 }
-
-
 
 void generateCurve(std::string &text, double r, double c, double nr, double nc, const RotationInfo &rot, bool is_outer_curve)
 {
@@ -128,8 +131,6 @@ void generateCurve(std::string &text, double r, double c, double nr, double nc, 
     text += "MOVE(" + std::to_string(nr) + "," + std::to_string(nc) + ")\n";
 }
 
-
-
 std::string knightRoute(std::string rows[8], Move move)
 {
     std::string text = "";
@@ -208,6 +209,7 @@ std::string knightRoute(std::string rows[8], Move move)
 
     text += "DOWN\n";
     text += "AUTOCALIB\n";
+    // text += "HOME";
 
     return text;
 }

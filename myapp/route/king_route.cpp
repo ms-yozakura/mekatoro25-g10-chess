@@ -36,6 +36,7 @@ std::string kingRoute(std::string rows[8], Move move)
         text += "MOVE(" + std::to_string(nr) + "," + std::to_string(nc) + ")\n";
         text += "DOWN\n";
         text += "AUTOCALIB\n";
+        // text += "HOME";
     }
     else
     {
@@ -45,6 +46,7 @@ std::string kingRoute(std::string rows[8], Move move)
         text += "MOVE(" + std::to_string(nr) + "," + std::to_string(nc) + ")\n";
         text += "DOWN\n";
         text += "AUTOCALIB\n";
+        // text += "HOME";
     }
 
     return text;

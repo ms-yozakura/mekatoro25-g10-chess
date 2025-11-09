@@ -13,7 +13,6 @@
 #include <vector>
 #include <string>
 
-
 #include "route.hpp"
 
 // 移動を表す型エイリアス{{startR, startC},{endR,endC}}: 0~7
@@ -24,12 +23,12 @@ std::string command(std::string rows[8], Move move)
 
     std::string text = "";
 
-
     // コマの退場は先にやる
     char end_type = rows[move.second.first][move.second.second];
     if (end_type != '*')
+    {
         text += eliminateRoute(rows, {{move.second.first, move.second.second}, TOMB}); // TOMBは仮
-
+    }
 
     // 動かすコマの種類を判定
     char type = rows[move.first.first][move.first.second];
@@ -67,7 +66,7 @@ std::string normalRoute(/*std::string rows[8], */ Move move)
     text += "MOVE(" + std::to_string(nr) + "," + std::to_string(nc) + ")\n";
     text += "DOWN\n";
     text += "AUTOCALIB\n";
+    // text += "HOME";
 
     return text;
 }
-

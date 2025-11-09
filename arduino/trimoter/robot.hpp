@@ -2,7 +2,8 @@
 #define ROBOT_H
 
 #include <AccelStepper.h>
-#include <Arduino.h> // Arduino固有の型（byteなど）や定数（HIGH/LOW）のために念のためインクルード
+#include <MultiStepper.h> // ★ 追加
+#include <Arduino.h>
 
 class Robot
 {
@@ -38,16 +39,19 @@ private:
     static const int BIP2_PIN1 = 8;
     static const int BIP2_PIN2 = 9;
 
-    //キャリブレートスイッチ
-    static const int XCALIB_PIN=10; // X軸キャリブレーションスイッチ
-    static const int YCALIB_PIN=11; // Y軸キャリブレーションスイッチ
-    static const int ZCALIB_PIN=12; // Z軸キャリブレーションスイッチ
-
+    // キャリブレートスイッチ
+    static const int XCALIB_PIN = 12; // X軸キャリブレーションスイッチ
+    static const int YCALIB_PIN = 11; // Y軸キャリブレーションスイッチ
+    
+    static const long REBOUND_STEPS = 8; // ホーミング後のリバウンド量 (ステップ数)
 
     // モーターインスタンス
     AccelStepper motorUni;
     AccelStepper motorBip1;
     AccelStepper motorBip2;
+
+    // ★ MultiStepper インスタンス
+    MultiStepper xySteppers;
 
     // モーター管理配列
     AccelStepper *motors[3];
@@ -56,11 +60,15 @@ private:
 
     // 座標変換定数 (仮設定: 実際の機械定数に合わせる必要があります)
     static constexpr float STEPS_PER_MM_Z = 64.11; //+チューニング済み
-    static constexpr float STEPS_PER_MM_X = 4.78; //+チューニング済み
-    static constexpr float STEPS_PER_MM_Y = 3.87; //+チューニング済み
+    static constexpr float STEPS_PER_MM_X = 4.78;  //+チューニング済み
+    static constexpr float STEPS_PER_MM_Y = 4.0;  //+チューニング済み
+
+    // ボードの原点の、機械座標での座標
+    static constexpr float BOARD_XZERO = 21.5;
+    static constexpr float BOARD_YZERO = 5.0;
 
     // --- ★ キュー関連の追加 ---
-    static const int MAX_COMMANDS = 10; // キューの最大サイズ
+    static const int MAX_COMMANDS = 15; // キューの最大サイズ
     struct QueuedCommand
     {
         char commandString[32];   // コマンド文字列を格納
@@ -71,7 +79,13 @@ private:
     int queueTail = 0; // 次に実行するコマンドの位置 (キューの先頭)
 
     // 現在実行中のコマンドの状態
-    bool isCommandExecuting = false; // モーター駆動を伴うコマンドが実行中か
+    bool isCommandExecuting = false;                    // モーター駆動を伴うコマンドが実行中か
+                                                        // ★ 新規追加: 自動キャリブレーションの状態管理
+    bool isAutoCalibrating = false;                     // AUTOCALIB実行中か
+    bool axisHomed[NUM_MOTORS] = {false, false, false}; // 各軸のホーミング完了フラグ (Z, X, Y)
+
+    // ZCALIB_PIN, XCALIB_PIN, YCALIB_PIN の配列を格納するメンバーを追加（任意）
+    const int axisPins[2] = {XCALIB_PIN, YCALIB_PIN};
 
     // ユーティリティ関数
     int getMotorIndex(char axis);
