@@ -31,6 +31,11 @@ Q_OBJECT // Qt のメタオブジェクトシステムを有効にする
     explicit MainWindow(ChessGame *game, SerialManager *serialManager, QWidget *parent = nullptr);
     ~MainWindow() override = default;
 
+public slots:
+    //画面キャプチャのスロット
+    void onVisionBoard(const QString& boardText);
+
+
 private slots:
     // --- モーター制御関連のスロット ---
     void on_moter_button_p_clicked(char axis);
@@ -51,6 +56,7 @@ private slots:
     // ユーザーの着手後にAIの着手を実行するための新しいスロット
     void processAITurn();
 
+
 private:
     // 依存オブジェクトへのポインタ
     ChessGame *m_game;
@@ -70,6 +76,7 @@ private:
     QLabel *m_moveListLabel;
     QLabel *m_bestMoveLabel;
     QLabel *m_commandLabel;
+    QLabel *board_data;
     QLineEdit *m_fenInput;
     QLineEdit *m_moveInput;
     QPushButton *m_moveInputButton;

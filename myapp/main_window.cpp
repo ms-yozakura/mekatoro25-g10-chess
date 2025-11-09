@@ -527,3 +527,30 @@ void MainWindow::processAITurn()
     // 5. シリアルコマンドをワーカースレッドに委譲
     emit sendAiCommand(QString::fromStdString(mycommand));
 }
+
+void MainWindow::onVisionBoard(const QString& boardText)
+{
+    // boardText の形式チェック（ranks=8、各段1文字以上）
+    const QStringList ranks = boardText.split('/');
+    if (ranks.size() != 8) {
+        qWarning() << "[Vision] Invalid board text (rank count):" << boardText;
+        return;
+    }
+    for (const auto& r : ranks) {
+        if (r.isEmpty()) {
+            qWarning() << "[Vision] Invalid board text (empty rank):" << boardText;
+            return;
+        }
+    }
+
+    // UIに反映：FEN入力欄にそのまま入れる
+    // ※ on_fenInput_textChanged が走って、盤面/合法手/最善手ラベルが更新される
+    m_fenInput->setText(boardText);
+
+    // いま来たのは「白が動いた直後」の盤面なので、次は黒の番（=AI）
+    m_turnWhite = false;
+
+    // すぐAI手番を処理（Arduinoコマンド生成→SerialManagerへemit まで含む）
+    processAITurn();
+}
+
