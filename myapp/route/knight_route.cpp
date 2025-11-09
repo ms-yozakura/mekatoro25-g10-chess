@@ -1,5 +1,6 @@
 
 #include "knight_route.hpp"
+#include <cmath>
 
 RotationInfo getRotationInfo(int dr, int dc)
 {

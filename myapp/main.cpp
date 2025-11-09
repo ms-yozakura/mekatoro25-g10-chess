@@ -76,11 +76,6 @@ int main(int argc, char *argv[])
         &window,      &MainWindow::onVisionBoard,
         Qt::QueuedConnection
     );
-    // 任意：ログ
-    QObject::connect(visionWorker, &BoardDetectorWorker::status,
-                     &window,      &MainWindow::onStatusLog, Qt::QueuedConnection);
-    QObject::connect(visionWorker, &BoardDetectorWorker::error,
-                     &window,      &MainWindow::onErrorLog, Qt::QueuedConnection);
 
     // Vision スレッド開始
     visionThread->start();

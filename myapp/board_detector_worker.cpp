@@ -14,9 +14,12 @@ using namespace chrono;
 // ==== あなたの単体版コードをフル移植（必要最小の形で） ====
 
 // JPEG警告を抑制
+#include <cstdio>
 static void suppressJPEGWarnings() {
-    freopen("/dev/null", "w", stderr);
+    FILE* f = freopen("/dev/null", "w", stderr);
+    (void)f;
 }
+
 
 // 駒の種類
 enum PieceType {
@@ -280,8 +283,8 @@ private:
 
     bool isValidRookMove(int from, int to) {
         int fx = from % 8, fy = from / 8;
-        int tx = to % 8, ty = to % 8;
-        return (fx == tx) || (fy == to / 8);
+        int tx = to % 8, ty = to / 8;
+        return (fx == tx) || (fy == ty);
     }
 
     bool isValidQueenMove(int from, int to) {
@@ -514,7 +517,11 @@ BoardDetectorWorker::BoardDetectorWorker(QString calibPath, QString device, int 
     : QObject(parent),
       calibPath_(std::move(calibPath)),
       device_(std::move(device)),
-      camIndex_(camIndex) {}
+      camIndex_(camIndex),
+      system_(std::make_unique<ChessDetectionSystem>()) 
+      {}
+
+BoardDetectorWorker::~BoardDetectorWorker() = default;
 
 void BoardDetectorWorker::run() {
     if (!initSystem()) { emit error("Failed to initialize ChessDetectionSystem"); return; }
@@ -544,7 +551,7 @@ void BoardDetectorWorker::stop() {
 
 bool BoardDetectorWorker::initSystem() {
     suppressJPEGWarnings();
-    return system_.initialize(calibPath_.toStdString());
+    return system_->initialize(calibPath_.toStdString());
 }
 
 bool BoardDetectorWorker::openCamera() {
@@ -569,15 +576,15 @@ bool BoardDetectorWorker::stepOnce(bool& whiteMoved, QString& boardText) {
     if (dt < DETECT_INTERVAL_) return false;
     lastDetect_ = now;
 
-    auto result = system_.tryConfirmState(frame);
+    auto result = system_->tryConfirmState(frame);
     bool confirmed = result.first;
     const BoardState& newState = result.second;
     if (!confirmed) return false;
 
-    BoardState before = system_.getLastConfirmedState();
+    BoardState before = system_->getLastConfirmedState();
     whiteMoved = isWhiteMove(before, newState);
 
-    system_.processConfirmedState(newState);
+    system_->processConfirmedState(newState);
 
     if (whiteMoved) {
         boardText = boardToText(newState);
