@@ -136,26 +136,26 @@ std::string knightRoute(std::string rows[8], Move move)
     std::string text = "";
 
     // 1. 座標の計算 (元のコードと同じ)
-    double r = (double)CELLSIZE * move.first.first + CELLSIZE / 2;
-    double c = (double)CELLSIZE * move.first.second + CELLSIZE / 2;
-    double nr = (double)CELLSIZE * move.second.first + CELLSIZE / 2;
-    double nc = (double)CELLSIZE * move.second.second + CELLSIZE / 2;
+    double r = (double)CELLSIZE * move.from.first + CELLSIZE / 2;
+    double c = (double)CELLSIZE * move.from.second + CELLSIZE / 2;
+    double nr = (double)CELLSIZE * move.to.first + CELLSIZE / 2;
+    double nc = (double)CELLSIZE * move.to.second + CELLSIZE / 2;
 
     text += "WARP(" + std::to_string(r) + "," + std::to_string(c) + ")\n";
     text += "UP\n";
 
-    int dr = move.second.first - move.first.first;
-    int dc = move.second.second - move.first.second;
+    int dr = move.to.first - move.from.first;
+    int dc = move.to.second - move.from.second;
 
     // 2. 回転情報の取得
     RotationInfo rot = getRotationInfo(dr, dc);
 
     // 3. 汎用的な障害物チェック
     // rel_r_norm=1, rel_c_norm=0 は進行方向の「内側/左側」に位置するマス
-    bool obstacle_inner = isObstacle(rows, move.first.first, move.first.second, rot, 1, 0);
+    bool obstacle_inner = isObstacle(rows, move.from.first, move.from.second, rot, 1, 0);
 
     // rel_r_norm=1, rel_c_norm=1 は進行方向の「外側/右側」に位置するマス
-    bool obstacle_outer = isObstacle(rows, move.first.first, move.first.second, rot, 1, 1);
+    bool obstacle_outer = isObstacle(rows, move.from.first, move.from.second, rot, 1, 1);
 
     // 4. 経路生成ロジックの統合
     if (!obstacle_inner && !obstacle_outer)

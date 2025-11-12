@@ -24,14 +24,14 @@ std::string command(std::string rows[8], Move move)
     std::string text = "";
 
     // コマの退場は先にやる
-    char end_type = rows[move.second.first][move.second.second];
+    char end_type = rows[move.to.first][move.to.second];
     if (end_type != '*')
     {
-        text += eliminateRoute(rows, {{move.second.first, move.second.second}, TOMB}); // TOMBは仮
+        text += eliminateRoute(rows, {{move.to.first, move.to.second}, TOMB}); // TOMBは仮
     }
 
     // 動かすコマの種類を判定
-    char type = rows[move.first.first][move.first.second];
+    char type = rows[move.from.first][move.from.second];
     bool isWhite = std::isupper(type); // 白か黒か
     type = toupper(type);              // コマの種類（大文字RNBKQP）
 
@@ -55,10 +55,10 @@ std::string normalRoute(/*std::string rows[8], */ Move move)
 
     std::string text = "";
 
-    double r = (double)CELLSIZE * move.first.first + CELLSIZE / 2;
-    double c = (double)CELLSIZE * move.first.second + CELLSIZE / 2;
-    double nr = (double)CELLSIZE * move.second.first + CELLSIZE / 2;
-    double nc = (double)CELLSIZE * move.second.second + CELLSIZE / 2;
+    double r = (double)CELLSIZE * move.from.first + CELLSIZE / 2;
+    double c = (double)CELLSIZE * move.from.second + CELLSIZE / 2;
+    double nr = (double)CELLSIZE * move.to.first + CELLSIZE / 2;
+    double nc = (double)CELLSIZE * move.to.second + CELLSIZE / 2;
 
     // text+="HOME";
     text += "WARP(" + std::to_string(r) + "," + std::to_string(c) + ")\n";

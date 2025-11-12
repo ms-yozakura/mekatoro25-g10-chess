@@ -13,14 +13,14 @@ std::string eliminateRoute(std::string rows[8], Move move)
 
     std::string text = "";
 
-    bool isWhite = std::isupper(rows[move.first.first][move.first.second]);
+    bool isWhite = std::isupper(rows[move.from.first][move.from.second]);
 
-    double r = (double)CELLSIZE * move.first.first + CELLSIZE / 2;
-    double c = (double)CELLSIZE * move.first.second + CELLSIZE / 2;
-    double mr = (double)CELLSIZE * move.first.first;
-    double mc = (double)CELLSIZE * move.first.second;
+    double r = (double)CELLSIZE * move.from.first + CELLSIZE / 2;
+    double c = (double)CELLSIZE * move.from.second + CELLSIZE / 2;
+    double mr = (double)CELLSIZE * move.from.first;
+    double mc = (double)CELLSIZE * move.from.second;
     double nr = isWhite ? (double)-CELLSIZE : (double)CELLSIZE * 8 + CELLSIZE * 3 / 2;
-    double nc = (double)CELLSIZE * move.first.second;
+    double nc = (double)CELLSIZE * move.from.second;
 
     // text+="HOME";
     text += "WARP(" + std::to_string(r) + "," + std::to_string(c) + ")\n";

@@ -23,17 +23,6 @@
 
 #include "types.hpp"
 
-// キャスリング判定のための移動履歴
-struct CastlingRights
-{
-    bool whiteKingMoved = false;
-    bool blackKingMoved = false;
-    bool whiteRookQSidesMoved = false; // クイーンサイド (a1/a8)
-    bool whiteRookKSidesMoved = false; // キングサイド (h1/h8)
-    bool blackRookQSidesMoved = false;
-    bool blackRookKSidesMoved = false;
-};
-
 class ChessGame
 {
 public:
@@ -44,28 +33,22 @@ public:
     void initBoard();
     Move ask(bool turnWhite);
     void runGame(); // main関数のロジックを移動
-
-    // ユーティリティ/盤面操作 (constを付けて状態を変更しないことを明示)
     void printBoard() const;
 
-    // メインループ用の移動 (CastlingRightsを更新する)
-    void makeMove(Move m);
+    // メインループ用の移動
+    void makeMove(Move &m);
+    void undoMove(Move m);
 
-    // ゲーム判定
+    // 合法手生成
     std::vector<Move> generateMoves(bool white) const;
 
     // AI機能
     Move bestMove(bool white);
 
-    // FENから盤面設定
-    void initBoardWithStrings(const std::string rows[8]);
+    // 終了判定
+    bool isEnd(bool turnWhite);
 
-    // FENから最善手
-    Move getBestMoveFromBoard(const std::string rows[8], bool turnWhite);
-
-    // FENから合法手
-    std::vector<Move> getLegalMovesFromBoard(const std::string rows[8], bool turnWhite);
-
+    // インターフェース
     // 座標から代数表記に変換する (GUI表示用)
     std::string coordsToAlgebraic(int r, int c) const;
     std::string moveToAlgebratic(Move move) const;
@@ -76,7 +59,14 @@ public:
 
     void getBoardAsStrings(std::string (&rows)[8]) const;
 
-    bool isEnd(bool turnWhite);
+    // FENから盤面設定
+    void initBoardWithStrings(const std::string rows[8]);
+
+    // FENから最善手
+    Move getBestMoveFromBoard(const std::string rows[8], bool turnWhite);
+
+    // FENから合法手
+    std::vector<Move> getLegalMovesFromBoard(const std::string rows[8], bool turnWhite);
 
 private:
     // 状態をカプセル化 (グローバル変数の廃止)
@@ -84,25 +74,29 @@ private:
     CastlingRights castlingRights;
     const int MAX_DEPTH = 4; // Minimaxの深さ
 
+    std::pair<int, int> enPassantSquare_; // アンパッサン可能なマス (無効な場合は {-1, -1} など)
+    int halfMoveClock_ = 0;               // 半手数（50手ルール導入のため）
+    int fullMoveNumber_ = 1;              // プレイされている手番の数 (黒番が終了するたびにインクリメント)
+
     std::vector<std::string> position_history_; // perprtual check判定用盤面履歴
 
     // ヘルパー関数
     bool algebraicToCoords(const std::string &alg, int &row, int &col) const;
-    void updateCastlingRights(int r1, int c1);
     std::pair<int, int> findKing(bool white) const;
     bool isKingOnBoard(bool white) const;
     bool isSquareAttacked(int r, int c, bool attackingWhite) const;
     void generateSlidingMoves(int r, int c, bool white, char type, std::vector<Move> &moves) const;
 
-    std::string getBoardStateFEN(bool turnWhite) const;
-
     bool isDrawByThreefoldRepetition(bool turnWhite) const;
 
-    // AI探索専用の移動 (CastlingRightsは更新しない)
-    void makeMoveInternal(Move m, Piece &capturedPiece);
-    void unmakeMoveInternal(Move m, Piece capturedPiece);
+    // ★ makeMoveInternal / unmakeMoveInternal のシグネチャ変更 ★
+    void makeMoveInternal(Move &m); // Undo情報を書き込むためにポインタ渡しする
+    void unmakeMoveInternal(Move m);
+    void updateCastlingRights(int r, int c);
 
     // Minimax
     int evaluate() const;
     int minimax(int depth, bool isMaximizingPlayer, int alpha, int beta);
+
+    std::string getBoardStateFEN(bool turnWhite) const;
 };

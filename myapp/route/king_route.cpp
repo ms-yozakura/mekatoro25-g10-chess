@@ -5,18 +5,18 @@ std::string kingRoute(std::string rows[8], Move move)
 {
     std::string text = "";
 
-    bool castling = std::abs(move.second.second - move.first.second) == 2;
-    bool isWhite = std::isupper(rows[move.first.first][move.first.second]);
+    bool castling = std::abs(move.to.second - move.from.second) == 2;
+    bool isWhite = std::isupper(rows[move.from.first][move.from.second]);
 
-    double r = (double)CELLSIZE * move.first.first + CELLSIZE / 2;
-    double c = (double)CELLSIZE * move.first.second + CELLSIZE / 2;
-    double nr = (double)CELLSIZE * move.second.first + CELLSIZE / 2;
-    double nc = (double)CELLSIZE * move.second.second + CELLSIZE / 2;
+    double r = (double)CELLSIZE * move.from.first + CELLSIZE / 2;
+    double c = (double)CELLSIZE * move.from.second + CELLSIZE / 2;
+    double nr = (double)CELLSIZE * move.to.first + CELLSIZE / 2;
+    double nc = (double)CELLSIZE * move.to.second + CELLSIZE / 2;
 
     if (castling)
     {
         text += std::string("// considering Castling movement\n");
-        bool isKingSide = (move.second.second - move.first.second) > 0;
+        bool isKingSide = (move.to.second - move.from.second) > 0;
         double rookr = (double)(isWhite ? CELLSIZE * 7 + CELLSIZE / 2 : CELLSIZE / 2);
         double rookc = (double)CELLSIZE * (double)(isKingSide ? 7 : 0) + CELLSIZE / 2;
         double rooknr = (double)(isWhite ? CELLSIZE * 7 + CELLSIZE / 2 : CELLSIZE / 2);

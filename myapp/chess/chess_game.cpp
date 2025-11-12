@@ -3,10 +3,7 @@
 /**
  * version 2.2
  *
- * ポーンに付いてバグあり（プロモーション周り）
- * アンパッサン実装なし
- * 50手ルール実装なし
- * FEN記法との相性は△、完全な互換は未実装
+ * FEN記法との相性は○
  * AIはコマ価値/位置価値/チェックボーナスから評価
  */
 
@@ -81,6 +78,9 @@ const int KingTable[8][8] = {
     {20, 20, 0, 0, 0, 0, 20, 20}, // 2段目のキングは少し安全
     {20, 30, 10, 0, 0, 10, 30, 20}};
 
+const int MATE_SCORE = 99999999;
+const int DRAW_SCORE = 0; // 引き分けスコア
+
 // -------------------------------------------------------------
 // ChessGameクラス
 // -------------------------------------------------------------
@@ -95,14 +95,27 @@ ChessGame::ChessGame()
 // -------------------------------------------------------------
 // ユーティリティ関数
 // -------------------------------------------------------------
-
+// ----------------------------------------------------------------------
+// 代数表記を座標に変換 (例: "a1" -> r=7, c=0)
+// ----------------------------------------------------------------------
 bool ChessGame::algebraicToCoords(const std::string &alg, int &row, int &col) const
 {
     if (alg.length() != 2)
         return false;
-    col = alg[0] - 'a';
-    row = 7 - (alg[1] - '1');
-    return col >= 0 && col < 8 && row >= 0 && row < 8;
+
+    // ファイル (列) を変換: 'a' -> 0, 'b' -> 1, ...
+    char file = std::tolower(alg[0]);
+    if (file < 'a' || file > 'h')
+        return false;
+    col = file - 'a'; // a=0, b=1, ...
+
+    // ランク (行) を変換: '1' -> 7, '2' -> 6, ...
+    char rank = alg[1];
+    if (rank < '1' || rank > '8')
+        return false;
+    row = '8' - rank; // '8'-'1'=7, '8'-'8'=0
+
+    return true;
 }
 
 void ChessGame::printBoard() const
@@ -127,182 +140,248 @@ void ChessGame::printBoard() const
     std::cout << "     a   b   c   d   e   f   g   h\n";
 }
 
-void ChessGame::updateCastlingRights(int r1, int c1)
+// ----------------------------------------------------------------------
+// メインループ用の移動 (MoveにUndo情報を記録し、履歴を更新する)
+// ----------------------------------------------------------------------
+// NOTE: シグネチャを makeMove(Move &m) に変更
+void ChessGame::makeMove(Move &m)
 {
-    if (r1 == 7)
-    { // 白
-        if (c1 == 4)
-            castlingRights.whiteKingMoved = true;
-        else if (c1 == 0)
-            castlingRights.whiteRookQSidesMoved = true;
-        else if (c1 == 7)
-            castlingRights.whiteRookKSidesMoved = true;
-    }
-    else if (r1 == 0)
-    { // 黒
-        if (c1 == 4)
-            castlingRights.blackKingMoved = true;
-        else if (c1 == 0)
-            castlingRights.blackRookQSidesMoved = true;
-        else if (c1 == 7)
-            castlingRights.blackRookKSidesMoved = true;
+    // 1. 実際の盤面操作と状態更新、Undo情報の記録
+    // makeMoveInternal が Move m の old* フィールドを埋め、盤面/状態を更新する
+    makeMoveInternal(m);
+
+    // 2. FEN履歴の更新 (三回繰り返しチェック用)
+    // makeMoveInternal実行後、board[m.to]には動かした駒が入っている。
+    // 次のターンは、この駒の所有者と反対の色である。
+    bool nextTurnWhite = !board[m.to.first][m.to.second].isWhite;
+    position_history_.push_back(getBoardStateFEN(nextTurnWhite));
+}
+
+// ----------------------------------------------------------------------
+// メインループ用の移動解除 (AIが makeMove を使った後、盤面を元に戻すために使用)
+// ----------------------------------------------------------------------
+void ChessGame::undoMove(Move m)
+{
+    // 1. 実際の盤面操作と状態の復元
+    // m は makeMove 内で完全に Undo 情報が記録された Move オブジェクトである
+    unmakeMoveInternal(m);
+
+    // 2. FEN履歴の更新 (最新の状態を削除)
+    if (!position_history_.empty())
+    {
+        position_history_.pop_back();
     }
 }
 
-// メインループ用 (CastlingRightsを更新)
-void ChessGame::makeMove(Move m)
+// ----------------------------------------------------------------------
+// AI探索専用の移動 (MoveにUndo情報を記録し、状態を更新する)
+// ----------------------------------------------------------------------
+void ChessGame::makeMoveInternal(Move &m)
 {
-    // makeMoveInternalのロジックを使用し、CastlingRightsの更新を追加
-    int r1 = m.first.first, c1 = m.first.second;
-    int r2 = m.second.first, c2 = m.second.second;
+    int r1 = m.from.first, c1 = m.from.second;
+    int r2 = m.to.first, c2 = m.to.second;
+    Piece pieceToMove = board[r1][c1];
+    bool isWhite = pieceToMove.isWhite;
 
-    // キャスリングの特殊処理
-    if (std::toupper(board[r1][c1].type) == 'K' && std::abs(c1 - c2) == 2)
+    // =======================================================
+    // 1. Undo情報（現在のゲーム状態）を Move に記録
+    // =======================================================
+    m.oldCastlingRights = castlingRights;
+    m.oldEnPassantSquare = enPassantSquare_;
+    m.oldHalfMoveClock = halfMoveClock_;
+    m.oldFullMoveNumber = fullMoveNumber_;
+
+    // キャプチャされた駒を記録 (通常/アンパッサンで取得元が異なる)
+    // まず、通常キャプチャの可能性から始める (r2, c2)
+    m.capturedPiece = board[r2][c2];
+
+    // =======================================================
+    // 2. halfMoveClock のリセット判定
+    // =======================================================
+    // ポーンの移動 または 駒のキャプチャがあればリセット
+    if (std::toupper(pieceToMove.type) == 'P' || m.capturedPiece.type != '*')
     {
-        // ... (キャスリングの移動ロジック - makeMoveInternalとほぼ同じ)
-        if (c2 > c1)
-        { // キングサイド
-            board[r2][c2] = board[r1][c1];
-            board[r1][c1] = Piece('*', true);
-            board[r2][c2 - 1] = board[r1][7];
-            board[r1][7] = Piece('*', true);
-        }
-        else
-        { // クイーンサイド
-            board[r2][c2] = board[r1][c1];
-            board[r1][c1] = Piece('*', true);
-            board[r2][c2 + 1] = board[r1][0];
-            board[r1][0] = Piece('*', true);
-        }
+        halfMoveClock_ = 0;
     }
     else
-    { // 通常の移動
-        board[r2][c2] = board[r1][c1];
-        board[r1][c1] = Piece('*', true);
-
-        // 移動後、ポーンの昇格をチェックする
-        if (std::toupper(board[r2][c2].type) == 'P')
-        {
-            bool isWhite = board[r2][c2].isWhite;
-            // 白: 0行目 (1段目)、黒: 7行目 (8段目)
-            if ((isWhite && r2 == 0) || (!isWhite && r2 == 7))
-            {
-                // クイーンに昇格
-                board[r2][c2].type = isWhite ? 'Q' : 'q';
-            }
-        }
+    {
+        halfMoveClock_++;
     }
+
+    // アンパッサンの場合、キャプチャ位置を修正
+    if (m.isEnPassant)
+    {
+        // 捕獲されたポーンは移動先(r2, c2)にはおらず、その手前にある
+        int capturedR = isWhite ? r2 + 1 : r2 - 1;
+
+        // m.capturedPiece をアンパッサンで捕獲されるポーンに上書き
+        m.capturedPiece = board[capturedR][c2];
+
+        // 敵のポーンを盤面から削除
+        board[capturedR][c2] = Piece('*', true);
+    }
+    // 通常の移動では、r2, c2の駒は次のステップで上書きされるか、m.capturedPieceのまま
+
+    // =======================================================
+    // 3. キャスリングの特殊処理
+    // =======================================================
+    if (m.isCastling)
+    {
+        // キングの移動は通常移動で処理されるため、ルークの移動のみ行う
+
+        // キングサイド (e1->g1 or e8->g8) : ルークは h から f へ
+        if (c2 == c1 + 2)
+        {
+            int rookC1 = 7; // h列
+            int rookC2 = 5; // f列
+            board[r2][rookC2] = board[r1][rookC1];
+            board[r1][rookC1] = Piece('*', true);
+        }
+        // クイーンサイド (e1->c1 or e8->c8) : ルークは a から d へ
+        else if (c2 == c1 - 2)
+        {
+            int rookC1 = 0; // a列
+            int rookC2 = 3; // d列
+            board[r2][rookC2] = board[r1][rookC1];
+            board[r1][rookC1] = Piece('*', true);
+        }
+        // キャスリングの場合、キャスリング権は updateCastlingRights で更新されるためここでは不要
+        // halfMoveClockはキング移動なのでリセットされない（既に通常移動として処理済み）
+    }
+
+    // =======================================================
+    // 4. 通常の駒の移動
+    // =======================================================
+    board[r2][c2] = pieceToMove;
+    board[r1][c1] = Piece('*', true); // 移動元を空にする
+
+    // =======================================================
+    // 5. プロモーションの実行
+    // =======================================================
+    if (m.promotedTo != '*')
+    {
+        // m.promotedTo に基づいて、色付きの駒の種類をセット
+        board[r2][c2].type = isWhite ? std::toupper(m.promotedTo) : std::tolower(m.promotedTo);
+        // halfMoveClock はポーン移動で既にリセット済み
+    }
+
+    // =======================================================
+    // 6. ゲーム状態の更新 (キャスリング権, アンパッサン, フルムーブ)
+    // =======================================================
+
+    // A. キャスリング権の更新
     updateCastlingRights(r1, c1);
+    updateCastlingRights(r2, c2); // ルークがキャプチャされた場合も更新
 
-    position_history_.push_back(getBoardStateFEN(board[r2][c2].isWhite));
-}
-
-// AI探索用
-void ChessGame::makeMoveInternal(Move m, Piece &capturedPiece)
-{
-    int r1 = m.first.first, c1 = m.first.second;
-    int r2 = m.second.first, c2 = m.second.second;
-
-    capturedPiece = board[r2][c2];
-
-    // キャスリングの特殊処理
-    if (std::toupper(board[r1][c1].type) == 'K' && std::abs(c1 - c2) == 2)
+    // B. 新しいアンパッサンマスの設定 (ポーンの2マス移動の場合)
+    // 以前の enPassantSquare_ は既に m.oldEnPassantSquare に保存済み
+    if (std::toupper(pieceToMove.type) == 'P' && std::abs(r1 - r2) == 2)
     {
-        if (c2 > c1)
-        { // キングサイド
-            board[r2][c2] = board[r1][c1];
-            board[r1][c1] = Piece('*', true);
-            board[r2][c2 - 1] = board[r1][7];
-            board[r1][7] = Piece('*', true);
-        }
-        else
-        { // クイーンサイド
-            board[r2][c2] = board[r1][c1];
-            board[r1][c1] = Piece('*', true);
-            board[r2][c2 + 1] = board[r1][0];
-            board[r1][0] = Piece('*', true);
-        }
-        capturedPiece.type = 'C';
+        // ポーンが2マス移動したら、通過したマスを enPassantSquare_ に設定
+        int targetR = isWhite ? r1 - 1 : r1 + 1; // 通過した行
+        enPassantSquare_ = {targetR, c1};
     }
-    // キャスリング以外の場合
     else
     {
-        board[r2][c2] = board[r1][c1];
-        board[r1][c1] = Piece('*', true);
+        // それ以外の移動では、アンパッサンマスは無効化される
+        enPassantSquare_ = {-1, -1};
+    }
 
-        // ★ 3. プロモーションをチェック (capturedPieceは変更しない) ★
-        if (std::toupper(board[r2][c2].type) == 'P')
-        {
-            bool isWhite = board[r2][c2].isWhite;
-            // 白: 0行目 (1段目)、黒: 7行目 (8段目)
-            if ((isWhite && r2 == 0) || (!isWhite && r2 == 7))
-            {
-                // クイーンに昇格
-                board[r2][c2].type = isWhite ? 'Q' : 'q';
-
-                // ★ 4. プロモーションがあったことを示すためにcapturedPieceを更新 ★
-                //   - キャプチャが無かった場合 (capturedPiece.type == '*') のみ、
-                //     特別なフラグ 'X' をセットし、Undo時に空マスを戻すことを通知
-                //   - キャプチャがあった場合、capturedPieceはキャプチャされた敵駒のままにする
-                if (capturedPiece.type == '*')
-                {
-                    capturedPiece.type = 'X';
-                }
-            }
-        }
+    // C. フルムーブ数の更新 (黒の移動が終了した場合のみ)
+    if (!isWhite)
+    {
+        fullMoveNumber_++;
     }
 }
-
-// AI探索用 Undo
-void ChessGame::unmakeMoveInternal(Move m, Piece capturedPiece)
+// ----------------------------------------------------------------------
+// AI探索専用の移動解除 (Moveに記録されたUndo情報を使って状態を復元する)
+// ----------------------------------------------------------------------
+void ChessGame::unmakeMoveInternal(Move m)
 {
-    int r1 = m.first.first, c1 = m.first.second;
-    int r2 = m.second.first, c2 = m.second.second;
+    int r1 = m.from.first, c1 = m.from.second;
+    int r2 = m.to.first, c2 = m.to.second;
+    Piece pieceToMove = board[r2][c2]; // 移動後の駒（元に戻す駒）
+    bool isWhite = pieceToMove.isWhite;
 
-    if (capturedPiece.type == 'C')
-    { // キャスリングのUndo
-        if (c2 > c1)
-        { // キングサイド
-            board[r1][c1] = board[r2][c2];
-            board[r2][c2] = Piece('*', true);
-            board[r1][7] = board[r2][c2 - 1];
-            board[r2][c2 - 1] = Piece('*', true);
-        }
-        else
-        { // クイーンサイド
-            board[r1][c1] = board[r2][c2];
-            board[r2][c2] = Piece('*', true);
-            board[r1][0] = board[r2][c2 + 1];
-            board[r2][c2 + 1] = Piece('*', true);
-        }
-    } // ★★★ 修正: キャプチャを伴わないプロモーションのUndo (フラグ 'X' を使用) ★★★
-    // r2の駒（Q/q）をポーンP/pに戻し、r2は空マスに戻す
-    else if (capturedPiece.type == 'X')
+    // =======================================================
+    // 1. 盤面上の駒を元に戻す
+    // =======================================================
+
+    // A. r2 の駒 (pieceToMove) を r1 に戻す
+    board[r1][c1] = pieceToMove;
+
+    // B. r2 に m.capturedPiece を戻す (通常キャプチャの場合)
+    // アンパッサンとキャスリングの場合、r2には空マスを戻す
+    if (!m.isEnPassant && !m.isCastling)
     {
-        // 1. r2のプロモーションされた駒（Q/q）をr1に戻す
-        board[r1][c1] = board[r2][c2];
-
-        // 2. r1に戻された駒をポーンに戻す
-        board[r1][c1].type = board[r1][c1].isWhite ? 'P' : 'p';
-
-        // 3. r2は空マスに戻す
+        board[r2][c2] = m.capturedPiece;
+    }
+    else
+    {
         board[r2][c2] = Piece('*', true);
     }
-    // ★★★ 修正: 通常のUndo処理 (キャプチャありプロモーションも含む) ★★★
-    else
+
+    // =======================================================
+    // 2. プロモーションのUndo
+    // =======================================================
+    if (m.promotedTo != '*')
     {
-        // r2の駒（プロモーション後のQ/q、または他の駒）をr1に戻す
-        board[r1][c1] = board[r2][c2];
-
-        // r2の駒がプロモーション後のクイーンであればポーンに戻す
-        if (std::toupper(board[r1][c1].type) == 'Q' && (r1 == 0 || r1 == 7))
-        {
-            board[r1][c1].type = board[r1][c1].isWhite ? 'P' : 'p';
-        }
-
-        // r2にキャプチャされた駒（または'*'）を戻す
-        board[r2][c2] = capturedPiece;
+        // r1に戻した駒をPawnに戻す
+        board[r1][c1].type = isWhite ? 'P' : 'p';
     }
+
+    // =======================================================
+    // 3. 特殊移動のUndo
+    // =======================================================
+
+    // A. アンパッサンのUndo
+    if (m.isEnPassant)
+    {
+        // 捕獲されたポーン（m.capturedPiece）を元の位置に戻す
+        // キャプチャされたポーンは r2 の真下/真上にいた
+        int capturedR = isWhite ? r2 + 1 : r2 - 1;
+
+        // m.capturedPiece (ポーン) を元の位置に戻す
+        board[capturedR][c2] = m.capturedPiece;
+    }
+
+    // B. キャスリングのUndo
+    if (m.isCastling)
+    {
+        // キングサイド (g1->e1 or g8->e8) : ルークは f から h へ
+        if (c2 == c1 + 2)
+        {
+            int rookC1 = 7;                        // h列
+            int rookC2 = 5;                        // f列
+            board[r1][rookC1] = board[r1][rookC2]; // ルークを h列に戻す
+            board[r1][rookC2] = Piece('*', true);  // f列を空にする
+        }
+        // クイーンサイド (c1->e1 or c8->e8) : ルークは d から a へ
+        else if (c2 == c1 - 2)
+        {
+            int rookC1 = 0;                        // a列
+            int rookC2 = 3;                        // d列
+            board[r1][rookC1] = board[r1][rookC2]; // ルークを a列に戻す
+            board[r1][rookC2] = Piece('*', true);  // d列を空にする
+        }
+        // r1, c1 はキングの元の位置、r2, c2 はキングの移動後の位置
+    }
+
+    // =======================================================
+    // 4. ゲーム状態の復元
+    // =======================================================
+
+    // A. フルムーブ数の復元 (黒の移動後にインクリメントされた分を元に戻す)
+    fullMoveNumber_ = m.oldFullMoveNumber;
+
+    // B. キャスリング権の復元
+    castlingRights = m.oldCastlingRights;
+
+    // C. アンパッサンマスの復元
+    enPassantSquare_ = m.oldEnPassantSquare;
+
+    // D. 50手ルールカウンターの復元
+    halfMoveClock_ = m.oldHalfMoveClock;
 }
 
 // -------------------------------------------------------------
@@ -421,57 +500,101 @@ bool ChessGame::isSquareAttacked(int r, int c, bool attackingWhite) const
     }
     return false;
 }
-
-// -------------------------------------------------------------
-// 履歴保存と三回反復チェック
-// -------------------------------------------------------------
-
+// ----------------------------------------------------------------------
+// 局面のFENを生成 (三回繰り返し判定用)
+// ----------------------------------------------------------------------
 std::string ChessGame::getBoardStateFEN(bool turnWhite) const
 {
     std::string fen = "";
-    // 1. 駒の配置 (board[8][8] を 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR' の形式に変換)
-    //    ★この部分の実装が少し大変ですが、盤面をユニークに識別できます。
-    //    今回は簡易的に、全マスを繋げた文字列に色と権利情報を追加するだけでも可。
-    // 例: "rnbqkbnr...PPPPPPPP" + (turnWhite ? "w" : "b") + castling_rights_string
 
-    // 2. 手番 (w or b) を追加
-    // 3. キャスリング権 (KQkqなど) を追加
-    // 4. アンパッサンターゲットマス (今回は省略可) を追加
-    // 5. 50手ルールカウント (今回は省略可) を追加
-    // 6. フルムーブ数 (今回は省略可) を追加
-
-    // 簡易版の例 (駒の配置と手番のみ):
+    // 1. 盤面 (Piece Placement)
     for (int r = 0; r < 8; ++r)
     {
+        int emptyCount = 0;
         for (int c = 0; c < 8; ++c)
         {
-            fen += board[r][c].type;
+            char pieceType = board[r][c].type;
+            if (pieceType == '*')
+            {
+                emptyCount++;
+            }
+            else
+            {
+                if (emptyCount > 0)
+                {
+                    fen += std::to_string(emptyCount);
+                    emptyCount = 0;
+                }
+                fen += pieceType;
+            }
+        }
+        if (emptyCount > 0)
+        {
+            fen += std::to_string(emptyCount);
+        }
+        if (r < 7)
+        {
+            fen += '/';
         }
     }
-    fen += (turnWhite ? "w" : "b");
+
+    // 2. 手番 (Active Color)
+    fen += turnWhite ? " w" : " b";
+
+    // 3. キャスリング権 (Castling Availability)
+    std::string castling = "";
+    if (!castlingRights.whiteKingMoved)
+    {
+        if (!castlingRights.whiteRookKSidesMoved)
+            castling += 'K'; // 白キングサイド
+        if (!castlingRights.whiteRookQSidesMoved)
+            castling += 'Q'; // 白クイーンサイド
+    }
+    if (!castlingRights.blackKingMoved)
+    {
+        if (!castlingRights.blackRookKSidesMoved)
+            castling += 'k'; // 黒キングサイド
+        if (!castlingRights.blackRookQSidesMoved)
+            castling += 'q'; // 黒クイーンサイド
+    }
+    fen += " " + (castling.empty() ? "-" : castling);
+
+    // 4. アンパッサンターゲットマス (En Passant Target Square)
+    if (enPassantSquare_.first != -1)
+    {
+        // 座標を代数表記に変換 (例: {2, 0} -> "a6")
+        fen += " " + coordsToAlgebraic(enPassantSquare_.first, enPassantSquare_.second);
+    }
+    else
+    {
+        fen += " -";
+    }
+
+    // Note: 50手ルールとフルムーブ数は三回繰り返し判定に不要なため、ここでは含めない
+    // ただし、完全なFENが必要な場合は " " + std::to_string(halfMoveClock_) + " " + std::to_string(fullMoveNumber_) を追加
+
     return fen;
 }
-
-// chess_game.cpp に追加
+// ----------------------------------------------------------------------
+// 三回繰り返しによる引き分け判定
+// ----------------------------------------------------------------------
 bool ChessGame::isDrawByThreefoldRepetition(bool turnWhite) const
 {
-    if (position_history_.empty())
-        return false;
-
-    // 現在の盤面状態を取得
-    std::string current_state = getBoardStateFEN(turnWhite);
+    // 現在のFENを取得
+    std::string currentFEN = getBoardStateFEN(turnWhite);
     int count = 0;
 
-    // 履歴を逆順にチェックして、同じ状態が何回出現したか数える
-    for (const auto &state : position_history_)
+    // 履歴を逆順に辿って、現在のFENと一致する回数を数える
+    // Note: FEN履歴には「手を指した後」の盤面が入っている
+    for (const auto &historyFEN : position_history_)
     {
-        if (state == current_state)
+        if (historyFEN == currentFEN)
         {
             count++;
         }
     }
-
-    // 3回以上出現したら引き分け
+    // 3回一致したら引き分け
+    // (historyには既に1回目が格納されているため、count == 3 でOK)
     return count >= 3;
 }
 
@@ -481,7 +604,6 @@ bool ChessGame::isDrawByThreefoldRepetition(bool turnWhite) const
 
 void ChessGame::generateSlidingMoves(int r, int c, bool white, char type, std::vector<Move> &moves) const
 {
-    // ... (元の generateSlidingMoves のロジックをそのまま移植)
     std::vector<std::pair<int, int>> directions;
     if (type == 'R' || type == 'Q')
     {
@@ -525,144 +647,226 @@ void ChessGame::generateSlidingMoves(int r, int c, bool white, char type, std::v
     }
 }
 
+// ----------------------------------------------------------------------
+// 合法手生成 (Move struct に特殊フラグを設定)
+// ----------------------------------------------------------------------
 std::vector<Move> ChessGame::generateMoves(bool white) const
 {
-    std::vector<Move> all_moves;
+    std::vector<Move> moves;
 
-    // 1. 全ての駒について**形式的に**動ける手を生成 (キャスリングを含む)
-    // (元の generateMoves の前半ロジックを移植)
-    for (int r = 0; r < 8; r++)
+    // 暫定的な合法手生成 (ここでは、まだ王手回避のチェックはしない)
+    for (int r = 0; r < 8; ++r)
     {
-        for (int c = 0; c < 8; c++)
+        for (int c = 0; c < 8; ++c)
         {
-            Piece p = board[r][c];
-            if (p.type == '*' || p.isWhite != white)
-                continue;
+            Piece piece = board[r][c];
 
-            char type = std::toupper(p.type);
-            int dir = white ? -1 : 1;
-
-            if (type == 'P')
+            if (piece.type != '*' && piece.isWhite == white)
             {
-                // ... ポーンの移動ロジック
-                int ni = r + dir;
-                if (ni >= 0 && ni < 8 && board[ni][c].type == '*')
+                // ポーン
+                if (std::toupper(piece.type) == 'P')
                 {
-                    all_moves.push_back({{r, c}, {ni, c}});
-                }
-                bool isInitialPos = (white && r == 6) || (!white && r == 1);
-                int ni2 = r + 2 * dir;
-                int ni1 = r + dir;
-                if (isInitialPos && ni2 >= 0 && ni2 < 8 && board[ni1][c].type == '*' && board[ni2][c].type == '*')
-                {
-                    all_moves.push_back({{r, c}, {ni2, c}});
-                }
-                int capture_cols[] = {c - 1, c + 1};
-                for (int nc : capture_cols)
-                {
-                    if (ni >= 0 && ni < 8 && nc >= 0 && nc < 8)
+                    // --- ポーンの移動方向と初期位置の設定 ---
+                    int dir = white ? -1 : 1;   // 白:上(-1), 黒:下(+1)
+                    int startR = white ? 6 : 1; // 白:2段目(6), 黒:7段目(1)
+                    int promoR = white ? 0 : 7; // 白:1段目(0), 黒:8段目(7)
+
+                    // -------------------------------------------------
+                    // 1. 前方への1マス移動
+                    // -------------------------------------------------
+                    int r2 = r + dir;
+                    if (r2 >= 0 && r2 < 8 && board[r2][c].type == '*')
                     {
-                        Piece target = board[ni][nc];
-                        if (target.type != '*' && target.isWhite != white)
+                        // プロモーション判定
+                        if (r2 == promoR)
                         {
-                            all_moves.push_back({{r, c}, {ni, nc}});
+                            // プロモーション移動: 4種類の駒を生成
+                            for (char promo : {'Q', 'R', 'B', 'N'})
+                            {
+                                // isEnPassant=false, isCastling=false の Move を生成
+                                moves.push_back(Move({r, c}, {r2, c}, promo));
+                            }
+                        }
+                        else
+                        {
+                            // 通常の1マス移動
+                            moves.push_back(Move({r, c}, {r2, c}));
+                        }
+
+                        // -------------------------------------------------
+                        // 2. 前方への2マス移動 (初期位置かつ1マス先も空いている)
+                        // -------------------------------------------------
+                        if (r == startR)
+                        {
+                            int r3 = r + 2 * dir;
+                            if (board[r3][c].type == '*')
+                            {
+                                moves.push_back(Move({r, c}, {r3, c}));
+                            }
+                        }
+                    }
+
+                    // -------------------------------------------------
+                    // 3. 通常の斜めキャプチャ
+                    // -------------------------------------------------
+                    for (int dc : {-1, 1}) // 左斜め(-1), 右斜め(+1)
+                    {
+                        int c2 = c + dc;
+                        if (c2 >= 0 && c2 < 8)
+                        {
+                            Piece target = board[r2][c2];
+                            if (target.type != '*' && target.isWhite != white)
+                            {
+                                // プロモーション判定
+                                if (r2 == promoR)
+                                {
+                                    // プロモーションキャプチャ
+                                    for (char promo : {'Q', 'R', 'B', 'N'})
+                                    {
+                                        moves.push_back(Move({r, c}, {r2, c2}, promo));
+                                    }
+                                }
+                                else
+                                {
+                                    // 通常のキャプチャ
+                                    moves.push_back(Move({r, c}, {r2, c2}));
+                                }
+                            }
+
+                            // -------------------------------------------------
+                            // 4. アンパッサンキャプチャ ★NEW★
+                            // -------------------------------------------------
+                            // 移動先マス(r2, c2)がアンパッサンターゲットマスと一致するか
+                            if (enPassantSquare_.first == r2 && enPassantSquare_.second == c2)
+                            {
+                                // アンパッサンはプロモーションと同時に起こらない
+                                // isEnPassant = true の Move を生成
+                                moves.push_back(Move({r, c}, {r2, c2}, '*', true, false));
+                            }
                         }
                     }
                 }
-            }
-            else if (type == 'K')
-            {
-                // ... キングの移動ロジック
-                for (int dr = -1; dr <= 1; dr++)
+                // キング
+                else if (std::toupper(piece.type) == 'K')
                 {
-                    for (int dc = -1; dc <= 1; dc++)
+                    // キングの移動ロジック
+                    // 1マス移動
+                    for (int dr = -1; dr <= 1; dr++)
                     {
-                        if (dr == 0 && dc == 0)
-                            continue;
-                        int nr = r + dr, nc = c + dc;
+                        for (int dc = -1; dc <= 1; dc++)
+                        {
+                            if (dr == 0 && dc == 0)
+                                continue;
+                            int nr = r + dr, nc = c + dc;
+                            if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8)
+                            {
+                                Piece target = board[nr][nc];
+                                if (target.type == '*' || target.isWhite != white)
+                                {
+                                    moves.push_back({{r, c}, {nr, nc}});
+                                }
+                            }
+                        }
+                    }
+
+                    // -------------------------------------------------
+                    // 5. キャスリングの移動生成 ★NEW / UPDATE★
+                    // キャスリングは、後の王手チェックで合法性が判断されるが、
+                    // ここでは移動自体を生成する
+                    // -------------------------------------------------
+
+                    // キングの初期位置 (e1 or e8)
+                    if ((white && r == 7 && c == 4) || (!white && r == 0 && c == 4))
+                    {
+                        // キャスリングは、キング、ルークが動いていない、
+                        // 間のマスが空いている、通過するマスがチェックされていない
+                        // などの条件が複雑だが、ここではまず移動自体を生成する。
+                        // (王手チェックは後のisLegalで行う)
+
+                        // 5-1. キングサイド (e->g)
+                        // hルークが動いていない and f, gが空
+                        bool canKS = white ? !castlingRights.whiteRookKSidesMoved && !castlingRights.whiteKingMoved : !castlingRights.blackRookKSidesMoved && !castlingRights.blackKingMoved;
+                        if (canKS && board[r][5].type == '*' && board[r][6].type == '*')
+                        { // ★ 追加: f-square (c=5) と g-square (c=6) が攻撃されていないかチェック ★
+                            if (!isSquareAttacked(r, 5, !white) && !isSquareAttacked(r, 6, !white))
+                            {
+                                moves.push_back(Move({r, c}, {r, 6}, '*', false, true));
+                            }
+                        }
+
+                        // 5-2. クイーンサイド (e->c)
+                        // aルークが動いていない and b, c, dが空
+                        bool canQS = white ? !castlingRights.whiteRookQSidesMoved && !castlingRights.whiteKingMoved : !castlingRights.blackRookQSidesMoved && !castlingRights.blackKingMoved;
+                        if (canQS && board[r][3].type == '*' && board[r][2].type == '*' && board[r][1].type == '*')
+                        { // ★ 追加: c-square (c=2) と d-square (c=3) が攻撃されていないかチェック ★
+                            if (!isSquareAttacked(r, 3, !white) && !isSquareAttacked(r, 2, !white))
+                            {
+                                moves.push_back(Move({r, c}, {r, 2}, '*', false, true));
+                            }
+                        }
+                    }
+                }
+                else if (std::toupper(piece.type) == 'N')
+                {
+                    // ... ナイトの移動ロジック
+                    int knight_moves[8][2] = {{2, 1}, {2, -1}, {-2, 1}, {-2, -1}, {1, 2}, {1, -2}, {-1, 2}, {-1, -2}};
+                    for (int i = 0; i < 8; i++)
+                    {
+                        int nr = r + knight_moves[i][0], nc = c + knight_moves[i][1];
                         if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8)
                         {
                             Piece target = board[nr][nc];
                             if (target.type == '*' || target.isWhite != white)
                             {
-                                all_moves.push_back({{r, c}, {nr, nc}});
+                                moves.push_back({{r, c}, {nr, nc}});
                             }
                         }
                     }
                 }
-                // キャスリング
-                int rank = white ? 7 : 0;
-                bool king_moved = white ? castlingRights.whiteKingMoved : castlingRights.blackKingMoved;
-                if (r == rank && c == 4 && !king_moved)
+                else if (std::toupper(piece.type) == 'R' || std::toupper(piece.type) == 'B' || std::toupper(piece.type) == 'Q')
                 {
-                    // キングサイド
-                    bool rook_ks_moved = white ? castlingRights.whiteRookKSidesMoved : castlingRights.blackRookKSidesMoved;
-                    if (!rook_ks_moved && board[rank][5].type == '*' && board[rank][6].type == '*')
-                    {
-                        all_moves.push_back({{r, c}, {r, 6}});
-                    }
-                    // クイーンサイド
-                    bool rook_qs_moved = white ? castlingRights.whiteRookQSidesMoved : castlingRights.blackRookQSidesMoved;
-                    if (!rook_qs_moved && board[rank][1].type == '*' && board[rank][2].type == '*' && board[rank][3].type == '*')
-                    {
-                        all_moves.push_back({{r, c}, {r, 2}});
-                    }
+                    generateSlidingMoves(r, c, white, std::toupper(piece.type), moves);
                 }
-            }
-            else if (type == 'N')
-            {
-                // ... ナイトの移動ロジック
-                int knight_moves[8][2] = {{2, 1}, {2, -1}, {-2, 1}, {-2, -1}, {1, 2}, {1, -2}, {-1, 2}, {-1, -2}};
-                for (int i = 0; i < 8; i++)
-                {
-                    int nr = r + knight_moves[i][0], nc = c + knight_moves[i][1];
-                    if (nr >= 0 && nr < 8 && nc >= 0 && nc < 8)
-                    {
-                        Piece target = board[nr][nc];
-                        if (target.type == '*' || target.isWhite != white)
-                        {
-                            all_moves.push_back({{r, c}, {nr, nc}});
-                        }
-                    }
-                }
-            }
-            else if (type == 'R' || type == 'B' || type == 'Q')
-            {
-                generateSlidingMoves(r, c, white, type, all_moves);
             }
         }
-    }
+    } // -------------------------------------------------
+    // 王手回避チェック (高速化のため、make/unmake ペアを使用)
+    // -------------------------------------------------
+    std::vector<Move> validMoves;
 
-    // 2. 違法な手 (自ら王手になる手) の除外処理
-    std::vector<Move> safeMoves;
-    bool selfWhite = white;
-    bool opponentWhite = !white;
+    // constメソッド内で状態を変更できないため、thisポインタの定数性を一時的にキャストして解除し、
+    // 内部関数（make/unmake）を呼び出せるようにします。
+    // ※これはC++の制約を回避する一般的な手法ですが、注意が必要です。
+    ChessGame *nonConstThis = const_cast<ChessGame *>(this);
 
-    for (const auto &move : all_moves)
+    for (const auto &move : moves)
     {
-        Piece capturedPiece;
-        // AI探索用の移動関数を使用
-        ChessGame temp_game = *this; // 盤面状態をコピー
-        temp_game.makeMoveInternal(move, capturedPiece);
+        // 1. Moveをコピー (Undo情報記録用)
+        Move tempMove = move;
 
-        std::pair<int, int> kingPos = temp_game.findKing(selfWhite);
-        int kr = kingPos.first;
-        int kc = kingPos.second;
+        // 2. 状態を進める (Undo情報が tempMove に記録される)
+        // const_cast経由で非constの内部関数を呼び出す
+        nonConstThis->makeMoveInternal(tempMove);
 
-        bool isInCheck = temp_game.isSquareAttacked(kr, kc, opponentWhite);
+        // 3. 移動後のキングの位置を取得
+        std::pair<int, int> kingPos = nonConstThis->findKing(white);
 
-        if (!isInCheck)
+        // 4. 移動後にキングが王手になっていないかチェック
+        // isSquareAttackedの第3引数: 攻撃側（敵）の色
+        if (!nonConstThis->isSquareAttacked(kingPos.first, kingPos.second, !white))
         {
-            safeMoves.push_back(move);
+            validMoves.push_back(move);
         }
-        // Undoは不要 (temp_game がスコープを抜けるため)
+
+        // 5. 状態を元に戻す (次の擬似合法手のチェックのため)
+        nonConstThis->unmakeMoveInternal(tempMove);
     }
 
-    return safeMoves;
+    return validMoves;
 }
 
 // -------------------------------------------------------------
-// AI機能 (Minimax)
+// AI機能
 // -------------------------------------------------------------
 int ChessGame::evaluate() const
 {
@@ -685,8 +889,8 @@ int ChessGame::evaluate() const
         is_endgame = false;
 
     int score = 0;
-    // 駒の物質的価値 (P:100, N/B:300, R:500, Q:900, K:1000000)
-    const int piece_values[] = {200, 300, 300, 500, 900, 10000000};
+    // 駒の物質的価値
+    const int piece_values[] = {100, 320, 330, 500, 900, 50000};
     const char piece_chars[] = {'P', 'N', 'B', 'R', 'Q', 'K'};
 
     for (int r = 0; r < 8; r++)
@@ -714,44 +918,35 @@ int ChessGame::evaluate() const
             // ★位置的価値 (Positional Score) の計算 (PSTsの使用)
             // ------------------------------------------------
             int positional_bonus = 0;
-            const int (*table)[8] = nullptr;
 
             switch (upper_type)
             {
             case 'P':
-                table = PawnTable;
+                positional_bonus = p.isWhite ? PawnTable[r][c] : PawnTable[7 - r][c];
                 break;
             case 'N':
-                table = KnightTable;
+                positional_bonus = p.isWhite ? KnightTable[r][c] : KnightTable[7 - r][c];
                 break;
             case 'B':
-                table = BishopTable;
+                positional_bonus = p.isWhite ? BishopTable[r][c] : BishopTable[7 - r][c];
                 break;
             case 'R':
-                table = RookTable;
+                positional_bonus = p.isWhite ? RookTable[r][c] : RookTable[7 - r][c];
                 break;
             case 'Q':
-                table = QueenTable;
+                positional_bonus = p.isWhite ? QueenTable[r][c] : QueenTable[7 - r][c];
                 break;
             case 'K':
-                table = KingTable;
-                break;
-            }
+                positional_bonus = p.isWhite ? KingTable[r][c] : KingTable[7 - r][c];
 
-            if (table)
-            {
-                // 白の駒はそのまま (r, c) を使い、黒の駒は盤面を上下反転して (7-r, c) を使う
-                int row_index = p.isWhite ? r : (7 - r);
-                positional_bonus = table[row_index][c];
-
-                // ★★★ キングPSTの終盤反転 ★★★
-                if (upper_type == 'K' && is_endgame)
+                if (is_endgame)
                 {
-                    // 終盤でキングが中央に出るように評価を反転させる
+                    // 終盤でキングが中央に出るように評価を**反転**させる (暫定的な対応)
+                    // キングの安全性よりも活動性を優先するため
                     positional_bonus = -positional_bonus;
                 }
+                break;
             }
-            // ------------------------------------------------
 
             if (p.isWhite)
             {
@@ -785,7 +980,7 @@ int ChessGame::evaluate() const
                 // 黒キング周辺のマスを白（攻撃側）が攻撃しているか
                 if (isSquareAttacked(nr, nc, true))
                 {
-                    white_attack_on_black += 10;
+                    white_attack_on_black += 5;
                 }
             }
         }
@@ -806,14 +1001,14 @@ int ChessGame::evaluate() const
                 // 白キング周辺のマスを黒（攻撃側）が攻撃しているか
                 if (isSquareAttacked(nr, nc, false))
                 {
-                    black_attack_on_white += 10;
+                    black_attack_on_white += 5;
                 }
             }
         }
     }
 
     // 攻撃ボーナスのウェイト調整
-    int weight = is_endgame ? 2 : 1; // 終盤なら攻撃ボーナスを強める
+    int weight = is_endgame ? 1 : 2;
 
     // 最終スコアに反映:
     // 白の攻撃ボーナスは score にプラス (白の有利)
@@ -876,79 +1071,126 @@ int ChessGame::evaluate() const
     score += passed_pawn_bonus;
 
     return score;
-    return score;
 }
 
+// ----------------------------------------------------------------------
+// Minimaxアルゴリズム (Alpha-Beta枝刈り付き)
+// ----------------------------------------------------------------------
 int ChessGame::minimax(int depth, bool isMaximizingPlayer, int alpha, int beta)
-{ // 1. 探索深さが0に達した場合
+{
+    // =======================================================
+    // 1. 基本ケース (Base Cases)
+    // =======================================================
     if (depth == 0)
     {
-        return evaluate(); // 駒得・位置的価値で評価
+        // 探索深さに達したら評価値を返す
+        return evaluate();
     }
 
-    // 2. 合法手を生成
-    // constメソッド generateMoves を呼び出し
-    auto moves = generateMoves(isMaximizingPlayer);
-
-    // 3. 葉ノード (チェックメイト or ステールメイト) の判定
-    if (moves.empty())
+    // 50手ルールによる引き分け判定
+    // halfMoveClock_ は makeMoveInternal で更新されている
+    if (halfMoveClock_ >= 100)
     {
-        // 自分のキングの位置を確認
+        return DRAW_SCORE;
+    }
+
+    // 三回繰り返しによる引き分け判定
+    // isDrawByThreefoldRepetition は history_ をチェックするため、この関数が
+    // 正しく実装されている必要があります。
+    if (isDrawByThreefoldRepetition(isMaximizingPlayer))
+    {
+        return DRAW_SCORE;
+    }
+
+    // ---------------------------------------------
+    // 手の生成
+    // ---------------------------------------------
+    // isMaximizingPlayer = true の場合、現在のターンプレイヤー（白/黒）として生成
+    std::vector<Move> possibleMoves = generateMoves(isMaximizingPlayer);
+
+    // メイト/ステイルメイト判定
+    if (possibleMoves.empty())
+    {
         std::pair<int, int> kingPos = findKing(isMaximizingPlayer);
-        // 相手からの攻撃を受けているか？
         bool isCheck = isSquareAttacked(kingPos.first, kingPos.second, !isMaximizingPlayer);
 
         if (isCheck)
         {
-            // チェックメイト！ 最大化側は極めて大きなプラス、最小化側は極めて大きなマイナス
-            // キングの価値(1000000000)をベースに、深さで少し調整して最短ルートを優先させる
-            int CHECKMATE_SCORE = 999999000; // キングの価値より少し低く設定
-            // 深さが残っているほど(depthが大きいほど)、より「早く」チェックメイトできることを意味する
-            return isMaximizingPlayer ? (CHECKMATE_SCORE + depth) : -(CHECKMATE_SCORE + depth);
+            // チェックメイト (現在のプレイヤーは負け)
+            // 評価値は、depthが深いほどメイトまでの手数が短いことを示すように補正する
+            return isMaximizingPlayer ? (-MATE_SCORE + (MAX_DEPTH - depth)) : (MATE_SCORE - (MAX_DEPTH - depth));
         }
         else
         {
-            // ステールメイト
-            return 0; // 引き分けは0点
+            // ステイルメイト (引き分け)
+            return DRAW_SCORE;
         }
     }
 
+    // =======================================================
+    // 2. 最大化プレイヤー (Maximizer: Whiteの番を想定)
+    // =======================================================
     if (isMaximizingPlayer)
     {
-        int maxEval = -2000000;
-        for (const auto &move : moves)
+        int maxEval = -MATE_SCORE; // 非常に低い値で初期化
+
+        for (const auto &move : possibleMoves)
         {
-            Piece capturedPiece;
-            makeMoveInternal(move, capturedPiece);
-            // 評価関数の呼び出しにも alpha, beta を渡す
-            int evaluation = minimax(depth - 1, false, alpha, beta);
-            unmakeMoveInternal(move, capturedPiece);
+            Move currentMove = move; // Moveをコピー (Undo情報記録用)
 
-            maxEval = std::max(maxEval, evaluation);
-            alpha = std::max(alpha, maxEval); // ★ Alpha の更新
+            // 状態を進める (historyは更新しない makeMoveInternal を使用)
+            makeMoveInternal(currentMove);
 
-            if (beta <= alpha) // ★ Beta Cutoff (枝刈り)
+            // 再帰探索 (次は最小化プレイヤー)
+            int eval = minimax(depth - 1, false, alpha, beta);
+
+            // 状態を元に戻す
+            unmakeMoveInternal(currentMove);
+
+            // スコア更新
+            maxEval = std::max(maxEval, eval);
+
+            // ★ Alpha更新: 見つけた最善のスコアでαを更新 ★
+            alpha = std::max(alpha, maxEval);
+
+            // ★ Beta枝刈り: この枝の最小スコア (β) が、既に他の枝で見つけた最大スコア (α) 以下の場合、
+            // これ以上探索してもより良い結果は見つからないため、探索を打ち切る
+            if (beta <= alpha)
             {
                 break;
             }
         }
         return maxEval;
     }
-    else // isMinimizingPlayer
+    // =======================================================
+    // 3. 最小化プレイヤー (Minimizer: Blackの番を想定)
+    // =======================================================
+    else
     {
-        int minEval = 2000000;
-        for (const auto &move : moves)
+        int minEval = MATE_SCORE; // 非常に高い値で初期化
+
+        for (const auto &move : possibleMoves)
         {
-            Piece capturedPiece;
-            makeMoveInternal(move, capturedPiece);
-            // 評価関数の呼び出しにも alpha, beta を渡す
-            int evaluation = minimax(depth - 1, true, alpha, beta);
-            unmakeMoveInternal(move, capturedPiece);
+            Move currentMove = move;
 
-            minEval = std::min(minEval, evaluation);
-            beta = std::min(beta, minEval); // ★ Beta の更新
+            // 状態を進める
+            makeMoveInternal(currentMove);
 
-            if (beta <= alpha) // ★ Alpha Cutoff (枝刈り)
+            // 再帰探索 (次は最大化プレイヤー)
+            int eval = minimax(depth - 1, true, alpha, beta);
+
+            // 状態を元に戻す
+            unmakeMoveInternal(currentMove);
+
+            // スコア更新
+            minEval = std::min(minEval, eval);
+
+            // ★ Beta更新: 見つけた最善のスコアでβを更新 ★
+            beta = std::min(beta, minEval);
+
+            // ★ Alpha枝刈り: この枝の最大スコア (α) が、既に他の枝で見つけた最小スコア (β) 以上の場合、
+            // これ以上探索してもより良い結果は見つからないため、探索を打ち切る
+            if (beta <= alpha)
             {
                 break;
             }
@@ -959,25 +1201,32 @@ int ChessGame::minimax(int depth, bool isMaximizingPlayer, int alpha, int beta)
 
 Move ChessGame::bestMove(bool white)
 {
+    // MATE_SCORE が定義されていることを前提とする
+    int bestScore = white ? -MATE_SCORE : MATE_SCORE;
+    Move best_move;
+
     auto moves = generateMoves(white);
     if (moves.empty())
     {
-        return {{0, 0}, {0, 0}};
+        return Move();
     }
 
-    int bestScore = white ? -20000000 : 20000000;
-    Move best_move = moves[0];
     std::vector<Move> tiedMoves;
 
     for (const auto &move : moves)
     {
-        Piece capturedPiece;
-        makeMoveInternal(move, capturedPiece);
+        Move currentMove = move; // Moveをコピーし、Undo情報を記録する準備
 
-        const int INF = 25000000; // 評価関数の最大値より大きい値
-        int score = minimax(MAX_DEPTH - 1, !white, -INF, INF);
+        // 1. 移動を実行 (参照渡しで currentMove に Undo情報が記録される)
+        // NOTE: AI探索のルートノードでは、historyを更新する public な makeMove を使用
+        makeMove(currentMove);
 
-        unmakeMoveInternal(move, capturedPiece);
+        // 2. minimax で評価
+        // 探索深さ MAX_DEPTH-1、相手の手番として呼び出す
+        int score = minimax(MAX_DEPTH - 1, !white, -MATE_SCORE, MATE_SCORE);
+
+        // 3. 移動を元に戻す (Undo情報が記録された currentMove を使用)
+        undoMove(currentMove); // public な undoMove を使用
 
         if (white)
         {
@@ -1036,51 +1285,78 @@ void ChessGame::initBoard()
     }
     castlingRights = {}; // 構造体のリセット
 }
-
+// ----------------------------------------------------------------------
+// プレイヤーからの入力を受け付け、Moveオブジェクトに変換する
+// ----------------------------------------------------------------------
 Move ChessGame::ask(bool turnWhite)
 {
-    if (!turnWhite)
+    std::string moveString;
+    Move move = Move(); // デフォルトコンストラクタで初期化
+
+    while (true)
     {
-        std::cout << "AI (Black) is thinking...\n";
-        return bestMove(turnWhite);
+        std::cout << (turnWhite ? "White" : "Black") << " move (e.g., e2e4 or e7e8q): ";
+        std::cin >> moveString;
+
+        if (moveString.length() < 4)
+        {
+            std::cout << "Invalid move format. Try again.\n";
+            continue;
+        }
+
+        // 1. 移動元・移動先の座標を取得
+        int r1, c1, r2, c2;
+        std::string fromStr = moveString.substr(0, 2);
+        std::string toStr = moveString.substr(2, 2);
+
+        if (!algebraicToCoords(fromStr, r1, c1) || !algebraicToCoords(toStr, r2, c2))
+        {
+            std::cout << "Invalid square names. Try again.\n";
+            continue;
+        }
+
+        // 2. プロモーション駒の取得
+        char promo = '*';
+        if (moveString.length() == 5)
+        {
+            promo = std::toupper(moveString[4]); // 入力された駒を大文字で取得 (Q, R, B, N)
+            if (promo != 'Q' && promo != 'R' && promo != 'B' && promo != 'N')
+            {
+                std::cout << "Invalid promotion piece. Use q, r, b, or n. Try again.\n";
+                continue;
+            }
+        }
+
+        // 3. 擬似的なMoveオブジェクトを作成
+        Move proposedMove({r1, c1}, {r2, c2}, promo);
+
+        // 4. 合法手リストを生成し、一致するMoveを探す
+        // generateMovesは、isEnPassantやisCastlingフラグが設定された完全な合法手リストを返す
+        std::vector<Move> legalMoves = generateMoves(turnWhite);
+
+        bool found = false;
+        for (const auto &legalMove : legalMoves)
+        {
+            // Moveの比較演算子(operator==)は from, to, promotedTo を比較するように実装済みと仮定
+            if (proposedMove == legalMove)
+            {
+                move = legalMove; // 完全な情報（特殊フラグ）を持つMoveをコピー
+                found = true;
+                break;
+            }
+        }
+
+        if (found)
+        {
+            return move;
+        }
+        else
+        {
+            std::cout << "Move is illegal or invalid. Try again.\n";
+        }
     }
-
-    std::cout << "Your turn (White). Enter move (e.g., e2e4 or e1g1 for Castling): ";
-    std::string move_str;
-    std::cin >> move_str;
-
-    if (move_str.length() != 4)
-    {
-        std::cout << "Invalid format. Please use startSquareEndSquare (e.g., e2e4).\n";
-        return ask(turnWhite);
-    }
-    int start_r, start_c, end_r, end_c;
-    std::string start_alg = move_str.substr(0, 2);
-    std::string end_alg = move_str.substr(2, 2);
-
-    if (!algebraicToCoords(start_alg, start_r, start_c) || !algebraicToCoords(end_alg, end_r, end_c))
-    {
-        std::cout << "Invalid square coordinates.\n";
-        return ask(turnWhite);
-    }
-
-    Move player_move = {{start_r, start_c}, {end_r, end_c}};
-    auto valid_moves = generateMoves(turnWhite);
-
-    bool is_valid = std::find(valid_moves.begin(), valid_moves.end(), player_move) != valid_moves.end();
-    if (!is_valid)
-    {
-        std::cout << "Illegal move. Try again.\n";
-        return ask(turnWhite);
-    }
-    if (board[start_r][start_c].type == '*' || board[start_r][start_c].isWhite != turnWhite)
-    {
-        std::cout << "No valid piece of your color on the starting square. Try again.\n";
-        return ask(turnWhite);
-    }
-
-    return player_move;
 }
+
 void ChessGame::runGame()
 {
     std::cout << "--- Full Chess (Minimax AI): Human (White) vs AI (Black) ---\n";
@@ -1138,10 +1414,13 @@ void ChessGame::runGame()
         }
 
         // 3. 指し手の表示、適用、ターン切替
+        std::cout << "Move No: "
+                  << fullMoveNumber_
+                  << " ";
         std::cout << (turnWhite ? "White" : "Black") << " moves: "
-                  << char('a' + move.first.second) << 8 - move.first.first
+                  << char('a' + move.from.second) << 8 - move.from.first
                   << " -> "
-                  << char('a' + move.second.second) << 8 - move.second.first
+                  << char('a' + move.to.second) << 8 - move.to.first
                   << "\n";
 
         makeMove(move);
@@ -1149,7 +1428,7 @@ void ChessGame::runGame()
         turnWhite = !turnWhite;
     }
 
-    std::cout << "\nGame finished (100 turns reached or Checkmate/Stalemate).\n";
+    std::cout << "\nGame finished.\n";
     std::cout << "Final Evaluation (White's perspective): " << evaluate() << std::endl;
 }
 
@@ -1208,27 +1487,35 @@ std::vector<Move> ChessGame::getLegalMovesFromBoard(const std::string rows[8], b
 
     return generateMoves(turnWhite);
 }
-
+// ----------------------------------------------------------------------
+// 座標を代数表記に変換 (例: r=7, c=0 -> "a1")
+// ----------------------------------------------------------------------
 std::string ChessGame::coordsToAlgebraic(int r, int c) const
 {
-    // c (0-7) -> 'a'-'h'
+    // C++の座標 (r:0-7, c:0-7) をチェスの表記 (File:a-h, Rank:8-1) に変換
+    if (r < 0 || r > 7 || c < 0 || c > 7)
+    {
+        // 無効な座標の場合はエラー値 (ただしFENでは'-'を使うべき)
+        return "-";
+    }
+
+    // File (列): 0->a, 1->b, ..., 7->h
     char file = 'a' + c;
 
-    // r (0-7) -> 8-1
-    char rank = '8' - r; // 行インデックス 0 は 文字 '8' に、7 は '1' に変換される
+    // Rank (行): 0->8, 1->7, ..., 7->1
+    char rank = '8' - r;
 
-    return std::string(1, file) + std::string(1, rank);
+    return std::string{file} + std::string{rank};
 }
-
 std::string ChessGame::moveToAlgebratic(Move move) const
 {
-    // Move.first.first = 開始行 (r1), Move.first.second = 開始列 (c1)
-    int r1 = move.first.first;
-    int c1 = move.first.second;
+    // Move.from.first = 開始行 (r1), Move.from.second = 開始列 (c1)
+    int r1 = move.from.first;
+    int c1 = move.from.second;
 
-    // Move.second.first = 終了行 (r2), Move.second.second = 終了列 (c2)
-    int r2 = move.second.first;
-    int c2 = move.second.second;
+    // Move.to.first = 終了行 (r2), Move.to.second = 終了列 (c2)
+    int r2 = move.to.first;
+    int c2 = move.to.second;
 
     // 開始座標を代数表記に変換
     std::string start_alg = coordsToAlgebraic(r1, c1);
@@ -1285,8 +1572,8 @@ bool ChessGame::algebraicToMove(const std::string &moveString, Move &move)
 
     // 5. Move型に格納
     // Moveは std::pair<std::pair<int,int> (from), std::pair<int,int> (to)>
-    move.first = {startRow, startCol}; // 移動元 (行, 列)
-    move.second = {endRow, endCol};    // 移動先 (行, 列)
+    move.from = {startRow, startCol}; // 移動元 (行, 列)
+    move.to = {endRow, endCol};       // 移動先 (行, 列)
 
     return true;
 }
@@ -1307,10 +1594,12 @@ void ChessGame::getBoardAsStrings(std::string (&rows)[8]) const
         }
     }
 }
-
+// ----------------------------------------------------------------------
+// ゲーム終了判定 (メインループ用)
+// ----------------------------------------------------------------------
 bool ChessGame::isEnd(bool turnWhite)
 {
-    // 1. 合法手を生成し、メイト/ステールメイトを判定
+    // 1. 合法手を生成し、メイト/ステイルメイトを判定
     auto possibleMoves = generateMoves(turnWhite);
 
     if (possibleMoves.empty())
@@ -1329,22 +1618,47 @@ bool ChessGame::isEnd(bool turnWhite)
         return true;
     }
 
+    // ★ 2. 三回繰り返しによる引き分け判定 ★
+    // isDrawByThreefoldRepetitionは既にminimaxに必要なロジックとして提案済み
     if (isDrawByThreefoldRepetition(turnWhite))
     {
-        std::cout << "\n*** DRAW! Game is a DRAW by PERPETUAL CHECK. ***\n";
-
+        std::cout << "\n*** DRAW! Game is a DRAW by Threefold Repetition. ***\n";
         return true;
     }
 
-    bool opponentWhite = !turnWhite;
-    if (!isKingOnBoard(opponentWhite))
+    // ★ 3. 50手ルールによる引き分け判定 ★
+    // halfMoveClock_ は makeMoveInternal/unmakeMoveInternal で管理されている
+    if (halfMoveClock_ >= 100)
     {
-        // 相手（捕獲された側）のキングが消えた
-        std::cout << "\n*** FATAL ERROR: KING CAPTURED! " << (turnWhite ? "White" : "Black") << " WINS! ***\n";
-        std::cout << "NOTE: This should not happen if checkmate/check logic is perfect.\n";
-
+        std::cout << "\n*** DRAW! Game is a DRAW by 50-move Rule. ***\n";
         return true;
     }
 
+    // 終了条件を満たさない場合は続行
     return false;
+}
+// ----------------------------------------------------------------------
+// キャスリング権の更新
+// ----------------------------------------------------------------------
+
+void ChessGame::updateCastlingRights(int r1, int c1)
+{
+    if (r1 == 7)
+    { // 白
+        if (c1 == 4)
+            castlingRights.whiteKingMoved = true;
+        else if (c1 == 0)
+            castlingRights.whiteRookQSidesMoved = true;
+        else if (c1 == 7)
+            castlingRights.whiteRookKSidesMoved = true;
+    }
+    else if (r1 == 0)
+    { // 黒
+        if (c1 == 4)
+            castlingRights.blackKingMoved = true;
+        else if (c1 == 0)
+            castlingRights.blackRookQSidesMoved = true;
+        else if (c1 == 7)
+            castlingRights.blackRookKSidesMoved = true;
+    }
 }

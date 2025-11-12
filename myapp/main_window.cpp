@@ -383,14 +383,14 @@ void MainWindow::on_fenInput_textChanged(const QString &text)
     QStringList moveStrings;
     for (const auto &move : legalMoves)
     {
-        std::string start_alg = m_game->coordsToAlgebraic(move.first.first, move.first.second);
-        std::string end_alg = m_game->coordsToAlgebraic(move.second.first, move.second.second);
+        std::string start_alg = m_game->coordsToAlgebraic(move.from.first, move.from.second);
+        std::string end_alg = m_game->coordsToAlgebraic(move.to.first, move.to.second);
         moveStrings.append(QString::fromStdString(start_alg + end_alg));
     }
 
     QString bestString;
-    std::string start_alg = m_game->coordsToAlgebraic(best.first.first, best.first.second);
-    std::string end_alg = m_game->coordsToAlgebraic(best.second.first, best.second.second);
+    std::string start_alg = m_game->coordsToAlgebraic(best.from.first, best.from.second);
+    std::string end_alg = m_game->coordsToAlgebraic(best.to.first, best.to.second);
     bestString = QString::fromStdString(start_alg + end_alg);
 
     std::string mycommand = command(newBoard, best);
