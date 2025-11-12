@@ -1,7 +1,7 @@
 #include "chess_game.hpp"
 
 /**
- * version 2.2
+ * version 3.0
  *
  * FEN記法との相性は○
  * AIはコマ価値/位置価値/チェックボーナスから評価
