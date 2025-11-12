@@ -1,5 +1,15 @@
 #include "chess_game.hpp"
 
+/**
+ * version 2.2
+ *
+ * ポーンに付いてバグあり（プロモーション周り）
+ * アンパッサン実装なし
+ * 50手ルール実装なし
+ * FEN記法との相性は△、完全な互換は未実装
+ * AIはコマ価値/位置価値/チェックボーナスから評価
+ */
+
 // -------------------------------------------------------------
 // 位置価値テーブル (Piece-Square Tables: PSTs) の定義
 // -------------------------------------------------------------
@@ -22,7 +32,7 @@ const int KnightTable[8][8] = {
     {-30, 5, 5, 5, 5, 5, 5, -30},
     {-30, 0, 10, 10, 10, 10, 0, -30},
     {-30, 5, 10, 10, 10, 10, 5, -30},
-    {-30, 0, 5000, 5, 5, 5, 0, -30},
+    {-30, 0, 5, 5, 5, 5, 0, -30},
     {-40, -20, 0, 0, 0, 0, -20, -40},
     {-30, -10, -10, -10, -10, -10, -10, -30}};
 
@@ -220,7 +230,7 @@ void ChessGame::makeMoveInternal(Move m, Piece &capturedPiece)
         board[r2][c2] = board[r1][c1];
         board[r1][c1] = Piece('*', true);
 
-        // プロモーションをチェック
+        // ★ 3. プロモーションをチェック (capturedPieceは変更しない) ★
         if (std::toupper(board[r2][c2].type) == 'P')
         {
             bool isWhite = board[r2][c2].isWhite;
@@ -230,10 +240,12 @@ void ChessGame::makeMoveInternal(Move m, Piece &capturedPiece)
                 // クイーンに昇格
                 board[r2][c2].type = isWhite ? 'Q' : 'q';
 
-                // ★★★ 修正: プロモーションがあったことを記録 ★★★
+                // ★ 4. プロモーションがあったことを示すためにcapturedPieceを更新 ★
+                //   - キャプチャが無かった場合 (capturedPiece.type == '*') のみ、
+                //     特別なフラグ 'X' をセットし、Undo時に空マスを戻すことを通知
+                //   - キャプチャがあった場合、capturedPieceはキャプチャされた敵駒のままにする
                 if (capturedPiece.type == '*')
-                { // キャプチャがない場合のみ
-                    // 'X'はプロモーションを示すフラグとして利用
+                {
                     capturedPiece.type = 'X';
                 }
             }
@@ -263,25 +275,32 @@ void ChessGame::unmakeMoveInternal(Move m, Piece capturedPiece)
             board[r1][0] = board[r2][c2 + 1];
             board[r2][c2 + 1] = Piece('*', true);
         }
-    } // ★★★ 修正: プロモーションのUndoをチェック ★★★
+    } // ★★★ 修正: キャプチャを伴わないプロモーションのUndo (フラグ 'X' を使用) ★★★
+    // r2の駒（Q/q）をポーンP/pに戻し、r2は空マスに戻す
     else if (capturedPiece.type == 'X')
     {
-        // 1. プロモーションでクイーンになった駒を元の位置 r1 に戻す
+        // 1. r2のプロモーションされた駒（Q/q）をr1に戻す
         board[r1][c1] = board[r2][c2];
 
         // 2. r1に戻された駒をポーンに戻す
         board[r1][c1].type = board[r1][c1].isWhite ? 'P' : 'p';
 
-        // 3. r2にはキャプチャされた駒（オリジナル）がないため、空を戻す
+        // 3. r2は空マスに戻す
         board[r2][c2] = Piece('*', true);
     }
-    // ★★★ 修正: 通常のUndo処理（ポーンのキャプチャも含む） ★★★
+    // ★★★ 修正: 通常のUndo処理 (キャプチャありプロモーションも含む) ★★★
     else
     {
-        // r2の駒をr1に戻す
+        // r2の駒（プロモーション後のQ/q、または他の駒）をr1に戻す
         board[r1][c1] = board[r2][c2];
 
-        // r2にキャプチャされた駒（ポーン 'p' を含む）を戻す
+        // r2の駒がプロモーション後のクイーンであればポーンに戻す
+        if (std::toupper(board[r1][c1].type) == 'Q' && (r1 == 0 || r1 == 7))
+        {
+            board[r1][c1].type = board[r1][c1].isWhite ? 'P' : 'p';
+        }
+
+        // r2にキャプチャされた駒（または'*'）を戻す
         board[r2][c2] = capturedPiece;
     }
 }
@@ -1329,4 +1348,3 @@ bool ChessGame::isEnd(bool turnWhite)
 
     return false;
 }
-

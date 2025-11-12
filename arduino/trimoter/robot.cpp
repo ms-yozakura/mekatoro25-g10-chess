@@ -41,7 +41,7 @@ void Robot::begin()
         }
         else // X, Y軸 (motorBip1, motorBip2)
         {
-            motors[i]->setMaxSpeed(200.0);
+            motors[i]->setMaxSpeed(1200.0);
             motors[i]->setAcceleration(800.0);
             motors[2]->setPinsInverted(true, true, true); // Y軸モータは何故かこの設定。理由は知らない（真顔）
         }
@@ -346,7 +346,7 @@ void Robot::executeNextCommand()
     else if (strcmp(command, "UP") == 0)
     {
         Serial.println("Z-Magnet UP: Move to 10mm");
-        float targetZ_mm = 18.3;
+        float targetZ_mm = 17.5;
         long targetZ_steps = (long)(targetZ_mm * STEPS_PER_MM_Z);
         motors[0]->moveTo(targetZ_steps); // Z軸 (motorUni) を絶対位置 100mmへ移動
         shouldWait = true;
@@ -413,11 +413,11 @@ void Robot::executeNextCommand()
 
                 if (strncmp(command, "MOVE(", 5) == 0)
                 {
-                    speedFactor = 1.5; // MOVE: 80%
+                    speedFactor = 3.0; // MOVE: 80%
                 }
                 else // WARP
                 {
-                    speedFactor = 2.0; // WARP: 200%
+                    speedFactor = 5.0; // WARP: 200%
                 }
 
                 float newMaxSpeed = standardMaxSpeed * speedFactor;

@@ -19,7 +19,7 @@ std::string eliminateRoute(std::string rows[8], Move move)
     double c = (double)CELLSIZE * move.first.second + CELLSIZE / 2;
     double mr = (double)CELLSIZE * move.first.first;
     double mc = (double)CELLSIZE * move.first.second;
-    double nr = !isWhite ? (double)-CELLSIZE : (double)CELLSIZE * 8 + CELLSIZE * 3 / 2;
+    double nr = isWhite ? (double)-CELLSIZE : (double)CELLSIZE * 8 + CELLSIZE * 3 / 2;
     double nc = (double)CELLSIZE * move.first.second;
 
     // text+="HOME";

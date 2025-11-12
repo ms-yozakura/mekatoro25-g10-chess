@@ -42,7 +42,7 @@ private:
     // キャリブレートスイッチ
     static const int XCALIB_PIN = 12; // X軸キャリブレーションスイッチ
     static const int YCALIB_PIN = 11; // Y軸キャリブレーションスイッチ
-    
+
     static const long REBOUND_STEPS = 8; // ホーミング後のリバウンド量 (ステップ数)
 
     // モーターインスタンス
@@ -61,7 +61,7 @@ private:
     // 座標変換定数 (仮設定: 実際の機械定数に合わせる必要があります)
     static constexpr float STEPS_PER_MM_Z = 64.11; //+チューニング済み
     static constexpr float STEPS_PER_MM_X = 4.78;  //+チューニング済み
-    static constexpr float STEPS_PER_MM_Y = 4.0;  //+チューニング済み
+    static constexpr float STEPS_PER_MM_Y = 4.0;   //+チューニング済み
 
     // ボードの原点の、機械座標での座標
     static constexpr float BOARD_XZERO = 21.5;
