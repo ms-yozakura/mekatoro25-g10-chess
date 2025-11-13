@@ -4,6 +4,8 @@
 #include <QFont>
 #include <algorithm>
 #include <QDebug> // デバッグ/Qt標準マクロ利用のため（必須ではありませんが慣例）
+#include <QList>
+#include <QMouseEvent>
 
 // コンストラクタ
 ChessBoardWidget::ChessBoardWidget(QWidget *parent) : QWidget(parent)
@@ -25,6 +27,95 @@ void ChessBoardWidget::setBoardState(const std::string rows[8])
         m_boardRows.append(QString::fromStdString(rows[i]));
     }
     update(); // QWidget::update()で再描画イベントをキューに追加
+}
+
+/**
+ * @brief FEN文字列を受け取り、盤面状態を更新し、再描画を要求します。
+ * @param fen FEN文字列全体。駒配置フィールドのみを解析します。
+ */
+void ChessBoardWidget::setBoardFromFEN(const std::string &fen)
+{
+    // 1. 駒配置フィールドの抽出（最初のスペースまで）
+    size_t firstSpace = fen.find(' ');
+    std::string placement = (firstSpace == std::string::npos) ? fen : fen.substr(0, firstSpace);
+
+    std::string rows[8];
+    int rank = 0; // 0 (8ランク) から 7 (1ランク)
+    std::string currentRankStr;
+
+    for (char c : placement)
+    {
+        if (rank >= 8)
+            break; // 8ランク分処理したら終了
+
+        if (c == '/')
+        {
+            // ランクの区切り
+            if (currentRankStr.length() != 8)
+            {
+                qWarning() << "FEN parsing error: Rank" << rank << "does not have 8 squares.";
+                // エラー処理（ここでは不完全なデータで次のランクへ）
+            }
+            rows[rank] = currentRankStr;
+            currentRankStr.clear();
+            rank++;
+        }
+        else if (isdigit(c))
+        {
+            // 空マス
+            int emptyCount = c - '0';
+            for (int i = 0; i < emptyCount; ++i)
+            {
+                currentRankStr += '*'; // 空マスは'*'で表現
+            }
+        }
+        else if (isalpha(c))
+        {
+            // 駒
+            currentRankStr += c;
+        }
+        else
+        {
+            // その他の文字（無視またはエラー）
+            qWarning() << "FEN parsing: Unexpected character:" << c;
+        }
+    }
+
+    // 最後のランクを保存
+    if (!currentRankStr.empty() && rank < 8)
+    {
+        if (currentRankStr.length() != 8)
+        {
+            qWarning() << "FEN parsing error: Final rank" << rank << "does not have 8 squares.";
+        }
+        rows[rank] = currentRankStr;
+    }
+
+    // 2. 既存の描画ロジックに渡す
+    // 注意: m_boardRows の形式は'p', 'r', '*', ... であり、
+    // setBoardStateの引数もこの形式である必要があります。
+    setBoardState(rows);
+}
+
+void ChessBoardWidget::mousePressEvent(QMouseEvent *event)
+{
+    QPoint clickPos = event->pos();
+
+    // 保持しているすべての矩形に対してループ処理を行う
+    for (int i = 0; i < m_cellRects.size(); ++i)
+    {
+        const QRect &rect = m_cellRects.at(i);
+
+        if (rect.contains(clickPos))
+        {
+            qDebug() << "クリックイベントが検出されました。矩形インデックス:" << i;
+            // インデックス i に基づいて、目的の処理を実行
+            event->accept();
+            return; // 処理が完了したら終了
+        }
+    }
+
+    QWidget::mousePressEvent(event);
 }
 
 // カスタム描画イベント
@@ -86,6 +177,12 @@ void ChessBoardWidget::paintEvent(QPaintEvent *event)
                 squareSize,
                 squareSize,
                 color);
+
+            m_cellRects << QRect(
+                xOffset + file * squareSize,
+                yOffset + rank * squareSize,
+                squareSize,
+                squareSize);
         }
     }
 
