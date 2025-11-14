@@ -1662,3 +1662,13 @@ void ChessGame::updateCastlingRights(int r1, int c1)
             castlingRights.blackRookKSidesMoved = true;
     }
 }
+
+bool ChessGame::isPromotionMove(Move move)
+{
+    Piece piece = board[move.from.first][move.from.second];
+    bool isWhite = (piece.type == std::toupper(piece.type));
+
+    int promoR = isWhite ? 0 : 7; // 白:1段目(0), 黒:8段目(7)
+
+    return (std::toupper(piece.type) == 'P' && move.to.first == promoR);
+}

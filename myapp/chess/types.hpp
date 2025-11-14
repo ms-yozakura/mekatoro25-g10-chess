@@ -75,7 +75,9 @@ struct Move
         return from == other.from &&
                to == other.to &&
                promotedTo == other.promotedTo &&
-               isEnPassant == other.isEnPassant &&
-               isCastling == other.isCastling;
+            //
+            //    isEnPassant == other.isEnPassant &&
+            //    isCastling == other.isCastling
+            ;
     }
 };

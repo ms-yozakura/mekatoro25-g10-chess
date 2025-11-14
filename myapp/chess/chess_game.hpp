@@ -68,6 +68,12 @@ public:
     // FENから合法手
     std::vector<Move> getLegalMovesFromBoard(const std::string rows[8], bool turnWhite);
 
+    bool algebraicToCoords(const std::string &alg, int &row, int &col) const;
+
+    std::string getBoardStateFEN(bool turnWhite) const;
+
+    bool isPromotionMove(Move move);
+
 private:
     // 状態をカプセル化 (グローバル変数の廃止)
     Piece board[8][8];
@@ -81,7 +87,6 @@ private:
     std::vector<std::string> position_history_; // perprtual check判定用盤面履歴
 
     // ヘルパー関数
-    bool algebraicToCoords(const std::string &alg, int &row, int &col) const;
     std::pair<int, int> findKing(bool white) const;
     bool isKingOnBoard(bool white) const;
     bool isSquareAttacked(int r, int c, bool attackingWhite) const;
@@ -97,6 +102,4 @@ private:
     // Minimax
     int evaluate() const;
     int minimax(int depth, bool isMaximizingPlayer, int alpha, int beta);
-
-    std::string getBoardStateFEN(bool turnWhite) const;
 };
